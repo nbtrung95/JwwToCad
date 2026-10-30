@@ -354,42 +354,83 @@ public sealed class JwwToCadConverter
             if (p.PenStyle == 100) foreach (var m in MarkerToCad(p, s)) yield return m;
     }
 
-    /// <summary>Point marks (dimension ends and standalone marks) drawn as small geometry.</summary>
+    /// <summary>
+    /// Point marks (CDataTen with pen style 100). Jw_cad stores SXF symbols here:
+    /// positive codes are SXF arrow codes 1-11 (dimension and leader ends), negative codes are
+    /// SXF point markers 1-7. Sizes follow the SXF shapes: base size 1.25 × Scale paper mm,
+    /// arrows 7.5 × Scale long with the tip on the point and the body along the rotation angle.
+    /// Checked against Jw_cad screens: code 7 dot and code -2 circle both have radius 1.25 × Scale.
+    /// </summary>
     IEnumerable<Entity> MarkerToCad(JwwPoint p, double s)
     {
-        // Sizes measured on Jw_cad screenshots (施-2 at 1/50, 施-8 at 1/40): the drawn radius is
-        // 1.25 × Scale in paper mm. Code 7 = filled dot (dimension ends), code -2 = small open circle
-        // (leader ends).
-        double r = (p.Scale > 0 ? p.Scale : 0.32) * 1.25 * s;
-        var c = new XYZ(p.X * s, p.Y * s, 0);
-        switch ((int)p.Code)
+        int code = (int)p.Code;
+        double k = (p.Scale > 0 ? p.Scale : 1.0) * s; // 1 SXF unit in drawing units
+        double cx = p.X * s, cy = p.Y * s;
+        XYZ At(double u, double v, double rotExtra = 0)
         {
-            case 7:
-                foreach (var so in FilledCircle(c, r)) { Apply(so, p, s); yield return so; }
-                Report.Add("Chấm đầu mút");
-                yield break;
-            case -2:
-                var ring = new Circle { Center = c, Radius = r };
-                Apply(ring, p, s);
-                Report.Add("Vòng tròn đầu mút");
-                yield return ring;
-                yield break;
-            case 3 or 4:
-                var m = new Circle { Center = c, Radius = r * 0.3 };
-                Apply(m, p, s);
-                yield return m;
-                yield break;
-            default:
-                // Unknown code: still mark the spot with a small circle so nothing disappears,
-                // and tell the user which code it was.
-                var mark = new Circle { Center = c, Radius = r };
-                Apply(mark, p, s);
-                Report.Add($"Dấu điểm mã {(int)p.Code} (vẽ tạm)");
-                if (_unknownCodes.Add((int)p.Code))
-                    Report.Warnings.Add($"Dấu điểm mã {(int)p.Code} chưa có trong bảng ký hiệu: đã vẽ tạm bằng vòng tròn nhỏ, cần kiểm tra lại hình dạng.");
-                yield return mark;
-                yield break;
+            double c2 = Math.Cos(p.Angle + rotExtra), s2 = Math.Sin(p.Angle + rotExtra);
+            return new XYZ(cx + (u * c2 - v * s2) * k, cy + (u * s2 + v * c2) * k, 0);
         }
+        var centre = new XYZ(cx, cy, 0);
+        var list = new List<Entity>();
+        void L(XYZ a, XYZ b) => list.Add(new Line(a, b));
+        void Poly(params XYZ[] pts) { for (int i = 0; i < pts.Length; i++) L(pts[i], pts[(i + 1) % pts.Length]); }
+        void Tri(XYZ a, XYZ b, XYZ c) => list.Add(new Solid { FirstCorner = a, SecondCorner = b, ThirdCorner = c, FourthCorner = c });
+        void Quad(XYZ a, XYZ b, XYZ c, XYZ d) => list.Add(new Solid { FirstCorner = a, SecondCorner = b, ThirdCorner = d, FourthCorner = c });
+        XYZ A0 = At(0, 0), W1 = At(7.5, 1.25), W2 = At(7.5, -1.25);
+        XYZ B1 = At(-1.25, -1.25), B2 = At(1.25, -1.25), B3 = At(1.25, 1.25), B4 = At(-1.25, 1.25);
+        string name;
+        switch (code)
+        {
+            // ----- SXF arrow codes -----
+            case 1: name = "mũi tên rỗng"; Poly(A0, W1, W2); break;
+            case 2: name = "ô vuông rỗng"; Poly(B1, B2, B3, B4); break;
+            case 3: name = "chấm rỗng"; list.Add(new Circle { Center = centre, Radius = 1.25 * k }); break;
+            case 4: name = "gốc kích thước"; list.Add(new Circle { Center = centre, Radius = 1.25 * k }); break;
+            case 5: name = "ô vuông đặc"; Quad(B1, B2, B3, B4); break;
+            case 6: name = "mũi tên đặc"; Tri(A0, W1, W2); break;
+            case 7: name = "chấm đặc"; list.AddRange(FilledCircle(centre, 1.25 * k)); break;
+            case 8:
+                name = "dấu tích phân";
+                {
+                    double h = 1.25; // two quarter arcs meeting at the point: (-h,-h) → (0,0) → (h,h)
+                    var pts = new List<XYZ>();
+                    for (int i = 0; i <= 12; i++) { double t = -Math.PI / 2 + Math.PI / 2 * i / 12; pts.Add(At(-h + h * Math.Cos(t), h * Math.Sin(t))); }
+                    for (int i = 1; i <= 12; i++) { double t = Math.PI - Math.PI / 2 * i / 12; pts.Add(At(h + h * Math.Cos(t), h * Math.Sin(t))); }
+                    for (int i = 0; i + 1 < pts.Count; i++) L(pts[i], pts[i + 1]);
+                }
+                break;
+            case 9: name = "mũi tên mở"; L(A0, W1); L(A0, W2); break;
+            case 10: name = "gạch chéo"; L(At(-1.25, -1.25), At(1.25, 1.25)); break;
+            case 11: name = "mũi tên viền"; Poly(A0, W1, W2); break;
+            // ----- SXF point markers (stored negative) -----
+            case -1:
+                name = "dấu sao";
+                for (int i = 0; i < 3; i++) L(At(0, -1.25, i * Math.PI / 3), At(0, 1.25, i * Math.PI / 3));
+                break;
+            case -2: name = "vòng tròn"; list.Add(new Circle { Center = centre, Radius = 1.25 * k }); break;
+            case -3: name = "chấm"; list.AddRange(FilledCircle(centre, 0.25 * s)); break; // fixed small dot
+            case -4: name = "dấu cộng"; L(At(-1.25, 0), At(1.25, 0)); L(At(0, -1.25), At(0, 1.25)); break;
+            case -5: name = "ô vuông"; Poly(B1, B2, B3, B4); break;
+            case -6:
+                name = "tam giác";
+                {
+                    double R = 5.0 / 3.0;
+                    XYZ V(double deg) => At(R * Math.Cos(deg * Math.PI / 180), R * Math.Sin(deg * Math.PI / 180));
+                    Poly(V(90), V(210), V(330));
+                }
+                break;
+            case -7: name = "dấu nhân"; L(At(-1.25, -1.25), At(1.25, 1.25)); L(At(-1.25, 1.25), At(1.25, -1.25)); break;
+            default:
+                // Not an SXF code: still mark the spot so nothing disappears, and say so.
+                name = $"mã {code} (vẽ tạm)";
+                list.Add(new Circle { Center = centre, Radius = 1.25 * k });
+                if (_unknownCodes.Add(code))
+                    Report.Warnings.Add($"Ký hiệu điểm mã {code} không có trong bảng SXF: đã vẽ tạm bằng vòng tròn nhỏ, cần kiểm tra lại.");
+                break;
+        }
+        Report.Add($"Ký hiệu: {name}");
+        foreach (var e in list) { Apply(e, p, s); yield return e; }
     }
 
     static IEnumerable<Solid> FilledCircle(XYZ c, double r, int n = 16)

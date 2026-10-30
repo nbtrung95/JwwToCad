@@ -23,6 +23,7 @@ static class Verify
         public List<Circ> Circs = new();
         public List<Txt> Txts = new();
         public List<Sol> Sols = new();
+        public List<(double X, double Y)> Pts = new(); // line ends and solid corners
         public HashSet<string> LayersOff = new();
     }
 
@@ -47,6 +48,11 @@ static class Verify
         var jww = JwwReader.Read(jwwPath);
         CadDocument doc = dwgPath.EndsWith(".dxf", StringComparison.OrdinalIgnoreCase)
             ? DxfReader.Read(dwgPath) : DwgReader.Read(dwgPath);
+        return Run(jww, doc, Path.GetFileName(jwwPath), paper, quiet);
+    }
+
+    public static int Run(JwwDocument jww, CadDocument doc, string title, bool paper, bool quiet = false)
+    {
 
         double GS(JwwEntity e) => Math.Max(jww.Groups[e.LayerGroup & 15].Scale, 1e-9);
         double main = paper ? 1 : jww.Entities.GroupBy(GS).OrderByDescending(g => g.Count()).First().Key;
@@ -59,6 +65,7 @@ static class Verify
         var circIdx = new Grid<Circ>(c => (c.X, c.Y), flat.Circs, main);
         var txtIdx = new Grid<Txt>(t => (t.X, t.Y), flat.Txts, main);
         var solIdx = new Grid<Sol>(s => (s.X, s.Y), flat.Sols, main);
+        var ptIdx = new Grid<(double X, double Y)>(q => (q.X, q.Y), flat.Pts, main);
 
         double tol = 0.02 * main; // 0.02 mm on paper
         var stats = new SortedDictionary<string, (int ok, int bad)>();
@@ -153,27 +160,49 @@ static class Verify
             Count(kind, why == null, why);
         }
 
+        // SXF symbol table (base size 1.25 × Scale paper mm; arrows 7.5 long, tip on the point):
+        // the corners each symbol must have, in symbol units, plus circles (radius) and fills.
         void CheckMarker(JwwPoint p, T t)
         {
-            var (x, y) = t.Ap(p.X, p.Y);
             int code = (int)p.Code;
-            double r = (p.Scale > 0 ? p.Scale : 0.32) * 1.25 * t.Scale;
-            string kind = $"Ký hiệu điểm mã {code}";
+            double k = (p.Scale > 0 ? p.Scale : 1.0) * t.Scale;
+            double ang = p.Angle + t.Rot;
+            var (ox, oy) = t.Ap(p.X, p.Y);
+            (double, double) At(double u, double v, double extra = 0)
+            {
+                double c = Math.Cos(ang + extra), s = Math.Sin(ang + extra);
+                return (ox + (u * c - v * s) * k, oy + (u * s + v * c) * k);
+            }
+            var corners = new List<(double, double)>();
+            double circle = 0; bool filled = false;
+            var arrow = new[] { At(0, 0), At(7.5, 1.25), At(7.5, -1.25) };
+            var box = new[] { At(-1.25, -1.25), At(1.25, -1.25), At(1.25, 1.25), At(-1.25, 1.25) };
             switch (code)
             {
-                case 7: // filled dot
-                    Count(kind, solIdx.Near(x, y, tol).Any(), $"thiếu chấm đặc tại ({F(x)},{F(y)})");
-                    break;
-                case -2: // open circle
-                    Count(kind, circIdx.Near(x, y, tol).Any(c => Math.Abs(c.R - r) < tol), $"thiếu vòng tròn r={F(r)} tại ({F(x)},{F(y)})");
-                    break;
-                case 3 or 4:
-                    Count(kind, circIdx.Near(x, y, tol).Any(), $"thiếu ký hiệu tại ({F(x)},{F(y)})");
-                    break;
-                default: // not in the symbol table: drawn as a stand-in, so it must be reviewed
-                    Count(kind, false, $"mã chưa có trong bảng ký hiệu, đã vẽ tạm tại ({F(x)},{F(y)})");
-                    break;
+                case 1 or 6 or 11: corners.AddRange(arrow); filled = code == 6; break;
+                case 9: corners.AddRange(arrow); break;
+                case 2 or 5 or -5: corners.AddRange(box); filled = code == 5; break;
+                case 3 or 4 or -2: circle = 1.25 * k; break;
+                case 7: filled = true; corners.Add(At(1.25, 0, -ang)); break; // dot: a point on its rim
+                case 8: corners.Add(At(-1.25, -1.25)); corners.Add(At(0, 0)); corners.Add(At(1.25, 1.25)); break;
+                case 10: corners.Add(At(-1.25, -1.25)); corners.Add(At(1.25, 1.25)); break;
+                case -1: for (int i = 0; i < 3; i++) { corners.Add(At(0, 1.25, i * Math.PI / 3)); corners.Add(At(0, -1.25, i * Math.PI / 3)); } break;
+                case -3: filled = true; break;
+                case -4: corners.AddRange(new[] { At(-1.25, 0), At(1.25, 0), At(0, -1.25), At(0, 1.25) }); break;
+                case -6: foreach (var d in new[] { 90.0, 210, 330 }) corners.Add(At(5.0 / 3 * Math.Cos(d * Math.PI / 180), 5.0 / 3 * Math.Sin(d * Math.PI / 180))); break;
+                case -7: corners.AddRange(box); break;
+                default:
+                    Count($"Ký hiệu điểm mã {code}", false, $"mã không có trong bảng SXF, đã vẽ tạm tại ({F(ox)},{F(oy)})");
+                    return;
             }
+            string? why = null;
+            foreach (var (x, y) in corners)
+                if (!ptIdx.Near(x, y, tol).Any()) { why = $"thiếu góc ({F(x)},{F(y)}) của ký hiệu tại ({F(ox)},{F(oy)})"; break; }
+            if (why == null && circle > 0 && !circIdx.Near(ox, oy, tol).Any(c => Math.Abs(c.R - circle) < tol))
+                why = $"thiếu vòng tròn r={F(circle)} tại ({F(ox)},{F(oy)})";
+            if (why == null && filled && !solIdx.Near(ox, oy, 2 * k + tol).Any())
+                why = $"ký hiệu tại ({F(ox)},{F(oy)}) chưa được tô đặc";
+            Count($"Ký hiệu điểm mã {code}", why == null, why);
         }
 
         foreach (var e in jww.Entities)
@@ -195,7 +224,7 @@ static class Verify
         int bad = stats.Values.Sum(v => v.bad) + visBad;
         if (!quiet || bad > 0)
         {
-            Console.WriteLine($"Kiểm tra {Path.GetFileName(jwwPath)} (tỉ lệ chính 1/{F(main)})");
+            Console.WriteLine($"Kiểm tra {title} (tỉ lệ chính 1/{F(main)})");
             foreach (var (k, (o, b)) in stats) Console.WriteLine($"  {(b == 0 ? "khớp" : "LỆCH")}  {k}: {o}/{o + b}");
             if (visBad > 0) Console.WriteLine($"  LỆCH  Bật/tắt layer: {visBad}");
             foreach (var s in samples) Console.WriteLine($"     - {s}");
@@ -214,7 +243,7 @@ static class Verify
             case Line l:
             {
                 var (x1, y1) = t.Ap(l.StartPoint.X, l.StartPoint.Y); var (x2, y2) = t.Ap(l.EndPoint.X, l.EndPoint.Y);
-                f.Segs.Add(new Seg(x1, y1, x2, y2, layer)); break;
+                f.Segs.Add(new Seg(x1, y1, x2, y2, layer)); f.Pts.Add((x1, y1)); f.Pts.Add((x2, y2)); break;
             }
             case Arc a:
             {
@@ -241,7 +270,7 @@ static class Verify
             {
                 var pts = new[] { so.FirstCorner, so.SecondCorner, so.ThirdCorner, so.FourthCorner };
                 double cx = 0, cy = 0;
-                foreach (var p in pts) { var (x, y) = t.Ap(p.X, p.Y); cx += x / 4; cy += y / 4; }
+                foreach (var p in pts) { var (x, y) = t.Ap(p.X, p.Y); cx += x / 4; cy += y / 4; f.Pts.Add((x, y)); }
                 f.Sols.Add(new Sol(cx, cy, layer));
                 // A fan triangle from a filled circle starts at the centre.
                 var (fx, fy) = t.Ap(so.FirstCorner.X, so.FirstCorner.Y);

@@ -33,3 +33,16 @@ dotnet run --project src/JwwToCad.Cli -- preview file.dwg file.svg         # xem
 - `src/JwwToCad.Core/Jww` – đọc định dạng JWW
 - `src/JwwToCad.Core/Convert` – chuyển sang đối tượng AutoCAD
 - `src/JwwToCad.Cli` – công cụ dòng lệnh để chuyển và kiểm tra
+
+## Tự kiểm tra
+
+Mỗi lần xuất, chương trình đọc lại file DWG và so từng đối tượng với file JWW gốc
+(đường, cung, chữ, tô đặc, kích thước, ký hiệu, block, bật/tắt layer). Kết quả in ra là
+`KHỚP` hoặc `CÒN n CHỖ LỆCH` kèm vị trí. Chạy offline, không cần Jw_cad hay AutoCAD.
+
+- `jwwtocad verify <file.jww|thư mục> <file.dwg|thư mục> [--paper]`: kiểm tra lại file đã xuất.
+- `jwwtocad selftest [out.dwg]`: tạo bản vẽ thử có đủ 18 ký hiệu SXF (11 mũi tên/chấm, 7 dấu điểm),
+  chuyển đổi rồi kiểm tra; đồng thời thử làm hỏng bản vẽ để chắc bộ kiểm tra phát hiện được lỗi.
+
+Ký hiệu điểm (đầu mút kích thước, đường dẫn) dùng mã SXF: mã dương 1-11 là mũi tên/chấm,
+mã âm -1..-7 là dấu điểm; cỡ gốc 1,25 × hệ số (mm giấy), mũi tên dài 7,5 × hệ số.

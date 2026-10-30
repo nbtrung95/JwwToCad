@@ -13,6 +13,7 @@ if (args.Length == 0)
     Console.WriteLine("Cách dùng: jwwtocad <file.jww | thư mục> [đầu ra] [--paper] [--dxf]");
     return 1;
 }
+if (args[0] == "selftest") return SelfTest.Run(args.Length > 1 ? args[1] : "selftest.dwg");
 if (args[0] == "verify")
 {
     // jwwtocad verify <jww file|folder> <dwg file|folder> [--paper]
