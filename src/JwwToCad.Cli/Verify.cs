@@ -156,9 +156,24 @@ static class Verify
         void CheckMarker(JwwPoint p, T t)
         {
             var (x, y) = t.Ap(p.X, p.Y);
-            // A mark must be drawn at the point itself (circle centre or filled-dot centre).
-            bool ok = circIdx.Near(x, y, tol).Any() || solIdx.Near(x, y, tol).Any();
-            Count($"Dấu đầu mút (mã {p.Code})", ok, $"tại ({F(x)},{F(y)})");
+            int code = (int)p.Code;
+            double r = (p.Scale > 0 ? p.Scale : 0.32) * 1.25 * t.Scale;
+            string kind = $"Ký hiệu điểm mã {code}";
+            switch (code)
+            {
+                case 7: // filled dot
+                    Count(kind, solIdx.Near(x, y, tol).Any(), $"thiếu chấm đặc tại ({F(x)},{F(y)})");
+                    break;
+                case -2: // open circle
+                    Count(kind, circIdx.Near(x, y, tol).Any(c => Math.Abs(c.R - r) < tol), $"thiếu vòng tròn r={F(r)} tại ({F(x)},{F(y)})");
+                    break;
+                case 3 or 4:
+                    Count(kind, circIdx.Near(x, y, tol).Any(), $"thiếu ký hiệu tại ({F(x)},{F(y)})");
+                    break;
+                default: // not in the symbol table: drawn as a stand-in, so it must be reviewed
+                    Count(kind, false, $"mã chưa có trong bảng ký hiệu, đã vẽ tạm tại ({F(x)},{F(y)})");
+                    break;
+            }
         }
 
         foreach (var e in jww.Entities)

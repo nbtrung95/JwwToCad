@@ -20,6 +20,7 @@ public sealed class JwwToCadConverter
     readonly Dictionary<(uint num, double scale), BlockRecord> _blocks = new();
     readonly Dictionary<uint, JwwBlockDef> _blockDefs = new();
     public ConvertReport Report { get; } = new();
+    readonly HashSet<int> _unknownCodes = new();
 
     // Jw_cad pen colours 1-9 -> AutoCAD colour index.
     static readonly short[] JwColorToAci = { 7, 4, 7, 3, 2, 6, 5, 7, 1, 8 };
@@ -379,8 +380,14 @@ public sealed class JwwToCadConverter
                 yield return m;
                 yield break;
             default:
-                Report.Skip($"Dấu điểm mã {(int)p.Code}");
-                Report.Warnings.Add($"Dấu điểm mã {(int)p.Code} chưa biết hình dạng, chưa vẽ.");
+                // Unknown code: still mark the spot with a small circle so nothing disappears,
+                // and tell the user which code it was.
+                var mark = new Circle { Center = c, Radius = r };
+                Apply(mark, p, s);
+                Report.Add($"Dấu điểm mã {(int)p.Code} (vẽ tạm)");
+                if (_unknownCodes.Add((int)p.Code))
+                    Report.Warnings.Add($"Dấu điểm mã {(int)p.Code} chưa có trong bảng ký hiệu: đã vẽ tạm bằng vòng tròn nhỏ, cần kiểm tra lại hình dạng.");
+                yield return mark;
                 yield break;
         }
     }
