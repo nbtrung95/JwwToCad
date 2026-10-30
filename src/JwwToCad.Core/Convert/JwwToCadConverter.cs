@@ -225,7 +225,7 @@ public sealed class JwwToCadConverter
                 Apply(arc, e, s); Report.Add("Cung/tròn"); yield return arc;
                 break;
             case JwwPoint p:
-                if (p.PenStyle == 100) { Report.Skip("Dấu điểm đặc biệt"); break; }
+                if (p.PenStyle == 100) { foreach (var m in MarkerToCad(p, s)) yield return m; break; }
                 if (p.IsTemporary && _opt.SkipTemporaryPoints) { Report.Skip("Điểm tạm"); break; }
                 var pt = new Point(new XYZ(p.X * s, p.Y * s, 0));
                 Apply(pt, e, s); Report.Add("Điểm"); yield return pt;
@@ -353,20 +353,47 @@ public sealed class JwwToCadConverter
             if (p.PenStyle == 100) foreach (var m in MarkerToCad(p, s)) yield return m;
     }
 
-    /// <summary>Dimension end marks (arrows, dots, ticks) drawn as small geometry.</summary>
+    /// <summary>Point marks (dimension ends and standalone marks) drawn as small geometry.</summary>
     IEnumerable<Entity> MarkerToCad(JwwPoint p, double s)
     {
-        // Size of the mark in paper mm comes from Scale; codes follow Jw_cad (1-2 arrows, 3 dot, ...).
-        double size = (p.Scale > 0 ? p.Scale : 1.0) * s;
+        // Sizes measured on Jw_cad screenshots (施-2 at 1/50, 施-8 at 1/40): the drawn radius is
+        // 1.25 × Scale in paper mm. Code 7 = filled dot (dimension ends), code -2 = small open circle
+        // (leader ends).
+        double r = (p.Scale > 0 ? p.Scale : 0.32) * 1.25 * s;
         var c = new XYZ(p.X * s, p.Y * s, 0);
-        Entity? m = p.Code switch
+        switch ((int)p.Code)
         {
-            3 or 4 => new Circle { Center = c, Radius = size * 0.3 },
-            _ => null,
-        };
-        if (m == null) { Report.Skip($"Dấu kích thước mã {p.Code}"); yield break; }
-        Apply(m, p, s);
-        yield return m;
+            case 7:
+                foreach (var so in FilledCircle(c, r)) { Apply(so, p, s); yield return so; }
+                Report.Add("Chấm đầu mút");
+                yield break;
+            case -2:
+                var ring = new Circle { Center = c, Radius = r };
+                Apply(ring, p, s);
+                Report.Add("Vòng tròn đầu mút");
+                yield return ring;
+                yield break;
+            case 3 or 4:
+                var m = new Circle { Center = c, Radius = r * 0.3 };
+                Apply(m, p, s);
+                yield return m;
+                yield break;
+            default:
+                Report.Skip($"Dấu điểm mã {(int)p.Code}");
+                Report.Warnings.Add($"Dấu điểm mã {(int)p.Code} chưa biết hình dạng, chưa vẽ.");
+                yield break;
+        }
+    }
+
+    static IEnumerable<Solid> FilledCircle(XYZ c, double r, int n = 16)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            double a0 = 2 * Math.PI * i / n, a1 = 2 * Math.PI * (i + 1) / n;
+            var a = new XYZ(c.X + r * Math.Cos(a0), c.Y + r * Math.Sin(a0), 0);
+            var b = new XYZ(c.X + r * Math.Cos(a1), c.Y + r * Math.Sin(a1), 0);
+            yield return new Solid { FirstCorner = c, SecondCorner = a, ThirdCorner = b, FourthCorner = b };
+        }
     }
 
     Insert? InsertToCad(JwwBlockInsert bi, double s, int depth)

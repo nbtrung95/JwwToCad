@@ -156,7 +156,8 @@ static class Verify
         void CheckMarker(JwwPoint p, T t)
         {
             var (x, y) = t.Ap(p.X, p.Y);
-            bool ok = circIdx.Near(x, y, tol).Any() || segIdx.Near(x, y, Math.Max(p.Scale, 1) * t.Scale * 3).Any(s => D(s.X1, s.Y1, x, y) < tol || D(s.X2, s.Y2, x, y) < tol);
+            // A mark must be drawn at the point itself (circle centre or filled-dot centre).
+            bool ok = circIdx.Near(x, y, tol).Any() || solIdx.Near(x, y, tol).Any();
             Count($"Dấu đầu mút (mã {p.Code})", ok, $"tại ({F(x)},{F(y)})");
         }
 
