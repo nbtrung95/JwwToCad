@@ -2,6 +2,7 @@ using ACadSharp;
 using ACadSharp.Entities;
 using ACadSharp.IO;
 using ACadSharp.Tables;
+using ACadSharp.XData;
 using CSMath;
 using JwwToCad.Core.Jww;
 
@@ -61,6 +62,8 @@ public sealed class JwwToCadConverter
     CadDocument Build()
     {
         _doc.Header.Version = _opt.Version;
+        _doc.Header.CodePage = "ANSI_932"; // Japanese, for programs that still read the code page
+        _doc.Header.InsUnits = ACadSharp.Types.Units.UnitsType.Millimeters;
         CreateLayers();
         foreach (var b in _jww.Blocks) _blockDefs[b.Number] = b;
         foreach (var e in _jww.Entities)
@@ -129,11 +132,30 @@ public sealed class JwwToCadConverter
     {
         font = string.IsNullOrWhiteSpace(font) ? "ＭＳ ゴシック" : font.Trim();
         if (_styles.TryGetValue(font, out var st)) return st;
-        string file = font.Contains("明朝") ? "msmincho.ttc" : "msgothic.ttc";
+        bool mincho = font.Contains("明朝");
+        bool proportional = font.Contains("Ｐ") || font.Contains("P明朝") || font.Contains("Pゴシック");
+        string face = mincho ? (proportional ? "ＭＳ Ｐ明朝" : "ＭＳ 明朝") : (proportional ? "ＭＳ Ｐゴシック" : "ＭＳ ゴシック");
+        string file = mincho ? "msmincho.ttc" : "msgothic.ttc";
         st = new TextStyle(Clean(font)) { Filename = file };
         _doc.TextStyles.Add(st);
+        // AutoCAD picks a TrueType face (and its character set) from this ACAD xdata,
+        // not from the file name alone: charset 128 = Shift-JIS, 0x31 = fixed pitch, modern family.
+        int pitchFamily = proportional ? 0x32 : 0x31;
+        st.ExtendedData.Add(AcadAppId(), new ExtendedData(new ExtendedDataRecord[]
+        {
+            new ExtendedDataString(face),
+            new ExtendedDataInteger32((128 << 8) | pitchFamily),
+        }));
         _styles[font] = st;
         return st;
+    }
+
+    AppId AcadAppId()
+    {
+        if (_doc.AppIds.TryGetValue("ACAD", out var app)) return app;
+        app = new AppId("ACAD");
+        _doc.AppIds.Add(app);
+        return app;
     }
 
     void Apply(Entity ce, JwwEntity e, double s)
