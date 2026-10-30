@@ -92,6 +92,13 @@ static class Preview
             var rgb = c.GetRgb();
             return $"rgb({rgb[0]},{rgb[1]},{rgb[2]})";
         }
+        string Dash(Entity e, double sc)
+        {
+            var lt = e.LineType;
+            if (lt == null || lt.Segments.Count() == 0) return "";
+            var d = lt.Segments.Select(g => Math.Max(Math.Abs(g.Length) * e.LineTypeScale * sc, 0.05 * e.LineTypeScale * sc)).ToList();
+            return $" stroke-dasharray='{string.Join(",", d.Select(F))}'";
+        }
         void Draw(Entity e, Func<double, double, (double, double)> tf, double sc)
         {
             if (!e.Layer.IsOn) return;
@@ -100,8 +107,16 @@ static class Preview
                 case Line l:
                     var (a1, b1) = tf(l.StartPoint.X, l.StartPoint.Y); var (a2, b2) = tf(l.EndPoint.X, l.EndPoint.Y);
                     Ext(a1, b1); Ext(a2, b2);
-                    sb.Append($"<line x1='{F(a1)}' y1='{F(-b1)}' x2='{F(a2)}' y2='{F(-b2)}' stroke='{Col(e)}'/>");
+                    sb.Append($"<line x1='{F(a1)}' y1='{F(-b1)}' x2='{F(a2)}' y2='{F(-b2)}' stroke='{Col(e)}'{Dash(e, sc)}/>");
                     break;
+                case RasterImage img:
+                {
+                    var (x0, y0) = tf(img.InsertPoint.X, img.InsertPoint.Y);
+                    var (x1, y1) = tf(img.InsertPoint.X + img.UVector.X * img.Size.X + img.VVector.X * img.Size.Y, img.InsertPoint.Y + img.UVector.Y * img.Size.X + img.VVector.Y * img.Size.Y);
+                    Ext(x0, y0); Ext(x1, y1);
+                    sb.Append($"<rect x='{F(Math.Min(x0, x1))}' y='{F(-Math.Max(y0, y1))}' width='{F(Math.Abs(x1 - x0))}' height='{F(Math.Abs(y1 - y0))}' fill='#fc8' stroke='#f80'/>");
+                    break;
+                }
                 case Arc ar:
                 {
                     var (cx, cy) = tf(ar.Center.X, ar.Center.Y); double r = ar.Radius * sc;
@@ -109,7 +124,7 @@ static class Preview
                     var (x1, y1) = (cx + r * Math.Cos(sa), cy + r * Math.Sin(sa));
                     var (x2, y2) = (cx + r * Math.Cos(ea), cy + r * Math.Sin(ea));
                     Ext(x1, y1); Ext(x2, y2);
-                    sb.Append($"<path d='M{F(x1)} {F(-y1)} A{F(r)} {F(r)} 0 {(ea - sa > Math.PI ? 1 : 0)} 0 {F(x2)} {F(-y2)}' stroke='{Col(e)}' fill='none'/>");
+                    sb.Append($"<path d='M{F(x1)} {F(-y1)} A{F(r)} {F(r)} 0 {(ea - sa > Math.PI ? 1 : 0)} 0 {F(x2)} {F(-y2)}' stroke='{Col(e)}' fill='none'{Dash(e, sc)}/>");
                     break;
                 }
                 case Circle ci:

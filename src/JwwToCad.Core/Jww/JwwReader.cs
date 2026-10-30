@@ -52,19 +52,102 @@ public sealed class JwwReader
             for (int l = 0; l < 16; l++) { grp.LayerState[l] = U32(); U32(); }
         }
         // Fixed-size settings between layer table and layer names.
-        _p += 4 * 14 + 4 * 5 + 4 + 4 + 8 * 2 + 8 + 4 + 4 + 8 + 8 * 2 + 8 * 2;
+        _p += 4 * 14 + 4 * 5 + 4;          // dummies, dimension settings, dummy
+        int maxDrawWidth = (int)U32();      // -101 = line widths in 1/100 mm
+        _p += 8 * 2 + 8 + 4 + 4 + 8 + 8 * 2 + 8 * 2;
         for (int g = 0; g < 16; g++)
             for (int l = 0; l < 16; l++) doc.Groups[g].LayerNames[l] = CStr();
         for (int g = 0; g < 16; g++) doc.Groups[g].Name = CStr();
 
-        // The remaining settings block is long and version dependent; jump to the entity list,
-        // which is the first MFC object list after it.
-        _p = FindEntityList();
+        // The remaining settings: parse them in order (jwdatafmt.txt); the entity list must start
+        // exactly where they end, otherwise fall back to searching for it.
+        int listStart = FindEntityList();
+        try
+        {
+            var h = ReadHeaderRest();
+            if (_p == listStart) { h.MaxDrawWidth = maxDrawWidth; doc.Header = h; }
+        }
+        catch (Exception) { }
+        _p = listStart;
         doc.Entities = ReadObList();
         foreach (var e in ReadObList())
             if (e is JwwBlockDef bd) doc.Blocks.Add(bd);
         if (_p + 4 <= _b.Length) doc.ImageCount = (int)U32();
+        try { ReadImages(doc); } catch (Exception) { }
         return doc;
+    }
+
+    // Images embedded with "画像同梱": per image a CString name ("xxx.bmp.gz"), a DWORD size and gzip data.
+    void ReadImages(JwwDocument doc)
+    {
+        for (int i = 0; i < doc.ImageCount && _p < _b.Length; i++)
+        {
+            string name = CStr();
+            int size = (int)U32();
+            if (size < 0 || _p + size > _b.Length) break;
+            using var input = new MemoryStream(_b, _p, size);
+            _p += size;
+            using var gz = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            gz.CopyTo(output);
+            if (name.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)) name = name[..^3];
+            doc.Images[name] = output.ToArray();
+        }
+    }
+
+    JwwHeader ReadHeaderRest()
+    {
+        var h = new JwwHeader();
+        F64(); F64(); U32(); F64();          // sun shadow
+        if (_ver >= 300) { F64(); F64(); }   // sky map
+        U32();                               // 2.5D unit
+        F64(); F64(); F64();                 // view
+        F64(); F64(); F64();                 // saved range
+        int jumps = _ver >= 300 ? 8 : 4;
+        for (int n = 0; n < jumps; n++) { F64(); F64(); F64(); if (_ver >= 300) U32(); }
+        if (_ver >= 300) { F64(); F64(); F64(); U32(); F64(); F64(); F64(); U32(); }
+        for (int n = 0; n <= 9; n++) F64(); // parallel line distances
+        F64();
+        for (int n = 0; n <= 9; n++) { h.ScreenColor[n] = U32(); h.ScreenWidth[n] = (int)U32(); }
+        for (int n = 0; n <= 9; n++) { h.PrintColor[n] = U32(); h.PrintWidth[n] = (int)U32(); h.PointRadius[n] = F64(); }
+        for (int n = 2; n <= 9; n++) h.LineTypes[n] = (U32(), (int)U32(), (int)U32(), (int)U32());
+        for (int n = 11; n <= 15; n++) { U32(); U32(); U32(); U32(); U32(); } // random lines
+        for (int n = 16; n <= 19; n++) h.LineTypes[n] = (U32(), (int)U32(), (int)U32(), (int)U32());
+        U32(); U32();                        // point radius flags
+        for (int n = 0; n < 9; n++) U32();   // draw order / print flags
+        if (_ver >= 223)
+        {
+            U32(); U32();                    // drawing time, eye flags
+            U32(); U32(); U32();
+            F64(); F64(); F64(); F64(); F64();
+        }
+        if (_ver >= 225) { F64(); F64(); F64(); F64(); }
+        if (_ver >= 230) { U32(); U32(); }
+        if (_ver >= 420)
+        {
+            for (int n = 0; n <= 256; n++) { h.ScreenColor[100 + n] = U32(); h.ScreenWidth[100 + n] = (int)U32(); }
+            for (int n = 0; n <= 256; n++)
+            {
+                h.ColorName[100 + n] = CStr();
+                h.PrintColor[100 + n] = U32(); h.PrintWidth[100 + n] = (int)U32(); h.PointRadius[100 + n] = F64();
+            }
+            for (int n = 0; n <= 32; n++) h.LineTypes[30 + n] = (U32(), (int)U32(), (int)U32(), (int)U32());
+            for (int n = 0; n <= 32; n++)
+            {
+                string name = CStr();
+                int seg = (int)U32();
+                var pitch = new double[10];
+                for (int j = 0; j < 10; j++) pitch[j] = F64();
+                h.SxfLineTypes[30 + n] = (name, pitch.Take(Math.Clamp(seg, 0, 10)).ToArray());
+            }
+        }
+        for (int i = 1; i <= 10; i++) { F64(); F64(); F64(); U32(); } // text kinds
+        F64(); F64(); F64(); U32(); U32();
+        F64(); F64();
+        U32();
+        F64(); F64(); F64();
+        F64(); F64(); F64();
+        return h;
     }
 
     int FindEntityList()

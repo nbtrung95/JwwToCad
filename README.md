@@ -37,12 +37,28 @@ dotnet run --project src/JwwToCad.Cli -- preview file.dwg file.svg         # xem
 ## Tự kiểm tra
 
 Mỗi lần xuất, chương trình đọc lại file DWG và so từng đối tượng với file JWW gốc
-(đường, cung, chữ, tô đặc, kích thước, ký hiệu, block, bật/tắt layer). Kết quả in ra là
+(đường, cung kể cả điểm đầu/cuối, chữ, tô đặc, kích thước, ký hiệu, block, ảnh, bật/tắt layer),
+cùng màu, kiểu nét, độ dày nét so với cài đặt lưu trong file JWW, và độ dài từng dòng chữ so với
+điểm cuối Jw_cad lưu. Kết quả in ra là
 `KHỚP` hoặc `CÒN n CHỖ LỆCH` kèm vị trí. Chạy offline, không cần Jw_cad hay AutoCAD.
 
 - `jwwtocad verify <file.jww|thư mục> <file.dwg|thư mục> [--paper]`: kiểm tra lại file đã xuất.
-- `jwwtocad selftest [out.dwg]`: tạo bản vẽ thử có đủ 18 ký hiệu SXF (11 mũi tên/chấm, 7 dấu điểm),
-  chuyển đổi rồi kiểm tra; đồng thời thử làm hỏng bản vẽ để chắc bộ kiểm tra phát hiện được lỗi.
+- `jwwtocad selftest [out.dwg]`: tạo bản vẽ thử có đủ mọi loại đối tượng định dạng JWW cho phép
+  (18 ký hiệu SXF, mọi màu 1–9 và SXF 100–356, mọi kiểu nét 1–9, 11–19, 30–62, độ dày nét, cung/elip,
+  chữ ngang/dọc/giãn chữ/đậm/nghiêng/phông lạ/mã ^u ^d ^$ …/mã nhúng %f, tô đặc tứ giác và tròn mọi kiểu,
+  ảnh trong file và ảnh liên kết, block lồng nhau có tỉ lệ/xoay/lật, kích thước, layer ẩn), chuyển đổi
+  rồi kiểm tra; sau đó làm hỏng bản vẽ theo 7 cách và đòi bộ kiểm tra phải phát hiện từng cách.
+
+## Những gì được chuyển theo đặc tả JWW
+
+- Màu: bút 1–9 theo số màu Jw_cad; màu SXF 100–356 lấy đúng RGB lưu trong file (đen/trắng thành màu 7).
+- Kiểu nét: nét SXF lấy độ dài mm lưu trong file; nét Jw_cad 2–9, 16–19 dựng từ mẫu bit trong file
+  (1 bit = bước in × 1/32 mm, đúng với cả 15 nét SXF chuẩn). Nét ngẫu nhiên 11–15 vẽ bằng nét liền và có cảnh báo.
+- Độ dày nét: độ dày riêng của đối tượng (1/100 mm), hoặc độ dày in của màu SXF.
+- Chữ: giãn chữ (chữ nửa cỡ dùng nửa khoảng), chữ dọc 縦字, đậm/nghiêng (kiểu chữ +10000 nghiêng,
+  +20000 đậm), phông theo tên, các mã ^ của Jw_cad, mã nhúng (tên file, tỉ lệ, ghi chú, ngày), ký tự %.
+- Tô đặc tròn: hình quạt, viên phân, phần ngoài cung, tròn đặc, vành khuyên 105/106.
+- Ảnh: ảnh nằm trong file JWW được giải nén ra thư mục `<tên>_anh` cạnh file DWG và chèn vào bản vẽ.
 
 Ký hiệu điểm (đầu mút kích thước, đường dẫn) dùng mã SXF: mã dương 1-11 là mũi tên/chấm,
 mã âm -1..-7 là dấu điểm; cỡ gốc 1,25 × hệ số (mm giấy), mũi tên dài 7,5 × hệ số.

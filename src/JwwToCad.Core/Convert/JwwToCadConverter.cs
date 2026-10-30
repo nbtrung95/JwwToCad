@@ -17,32 +17,32 @@ public sealed class JwwToCadConverter
     readonly Layer[,] _layers = new Layer[16, 16];
     readonly Dictionary<int, LineType> _lineTypes = new();
     readonly Dictionary<string, TextStyle> _styles = new();
-    readonly Dictionary<(uint num, double scale), BlockRecord> _blocks = new();
     readonly Dictionary<uint, JwwBlockDef> _blockDefs = new();
     public ConvertReport Report { get; } = new();
     readonly HashSet<int> _unknownCodes = new();
 
-    // Jw_cad pen colours 1-9 -> AutoCAD colour index.
-    static readonly short[] JwColorToAci = { 7, 4, 7, 3, 2, 6, 5, 7, 1, 8 };
+    readonly JwwStyles _st;
+    readonly JwEmbeddedText _embed;
+    readonly HashSet<string> _warned = new();
+    readonly Dictionary<string, ACadSharp.Objects.ImageDefinition> _images = new(StringComparer.OrdinalIgnoreCase);
 
-    // Line type patterns in paper millimetres (dash > 0, gap < 0, dot = 0).
-    static readonly Dictionary<int, double[]> Patterns = new()
+    void WarnOnce(string msg) { if (_warned.Add(msg)) Report.Warnings.Add(msg); }
+
+    JwwToCadConverter(JwwDocument jww, ConvertOptions opt)
     {
-        [2] = new[] { 3.0, -1.0 },
-        [3] = new[] { 1.5, -1.5 },
-        [4] = new[] { 0.0, -1.0 },
-        [5] = new[] { 6.0, -1.0, 0.0, -1.0 },
-        [6] = new[] { 12.0, -1.5, 0.0, -1.5 },
-        [7] = new[] { 6.0, -1.0, 0.0, -1.0, 0.0, -1.0 },
-        [8] = new[] { 12.0, -1.5, 0.0, -1.5, 0.0, -1.5 },
-        [9] = new[] { 1.0, -1.0 },
-    };
-
-    JwwToCadConverter(JwwDocument jww, ConvertOptions opt) { _jww = jww; _opt = opt; }
+        _jww = jww; _opt = opt;
+        _st = new JwwStyles(jww.Header);
+        _embed = new JwEmbeddedText { FilePath = opt.SourcePath, Memo = jww.Memo ?? "" };
+        if (opt.SourcePath != null && File.Exists(opt.SourcePath)) _embed.Saved = File.GetLastWriteTime(opt.SourcePath);
+        if (jww.Header == null)
+            Report.Warnings.Add("Không đọc được phần cài đặt của file (màu SXF, kiểu nét): đã dùng cài đặt mặc định của Jw_cad.");
+    }
 
     public static ConvertReport ConvertFile(string jwwPath, string outPath, ConvertOptions? opt = null)
     {
         opt ??= new ConvertOptions();
+        opt.SourcePath = jwwPath;
+        opt.OutputPath = outPath;
         var c = new JwwToCadConverter(JwwReader.Read(jwwPath), opt);
         var doc = c.Build();
         if (Path.GetExtension(outPath).Equals(".dxf", StringComparison.OrdinalIgnoreCase))
@@ -75,8 +75,6 @@ public sealed class JwwToCadConverter
         }
         else
             BuildRealSizeWithLayout();
-        if (_jww.ImageCount > 0)
-            Report.Warnings.Add($"File có {_jww.ImageCount} ảnh chèn, bản này chưa chuyển ảnh.");
         return _doc;
     }
 
@@ -161,36 +159,73 @@ public sealed class JwwToCadConverter
     LineType? LineTypeOf(JwwEntity e)
     {
         int style = e.PenStyle;
-        if (!Patterns.TryGetValue(style, out var pat)) return null;
-        if (!_lineTypes.TryGetValue(style, out var lt))
-        {
-            lt = new LineType($"JW_LINE{style}") { Description = $"Jw_cad nét {style}" };
-            foreach (var len in pat) lt.AddSegment(new LineType.Segment { Length = len });
-            _doc.LineTypes.Add(lt);
-            _lineTypes[style] = lt;
-        }
+        if (_lineTypes.TryGetValue(style, out var lt)) return lt;
+        var pat = _st.LinePattern(style, out string name, out string? problem);
+        if (problem != null) WarnOnce($"Nét: {problem}.");
+        if (pat == null) { _lineTypes[style] = null!; return null; }
+        name = Clean(name);
+        string unique = name; int k = 1;
+        while (_doc.LineTypes.Contains(unique)) unique = $"{name}_{++k}";
+        lt = new LineType(unique) { Description = $"Jw_cad nét {style}" };
+        foreach (var len in pat) lt.AddSegment(new LineType.Segment { Length = len });
+        _doc.LineTypes.Add(lt);
+        _lineTypes[style] = lt;
         return lt;
     }
 
-    TextStyle StyleOf(string font)
+    // Font files of the usual Japanese fonts (looked up with full-width letters folded).
+    static readonly (string Key, string File, bool Proportional)[] KnownFonts =
+    {
+        ("MS Pゴシック", "msgothic.ttc", true), ("MS UI Gothic", "msgothic.ttc", true), ("MS ゴシック", "msgothic.ttc", false),
+        ("MS P明朝", "msmincho.ttc", true), ("MS 明朝", "msmincho.ttc", false),
+        ("Meiryo UI", "meiryo.ttc", true), ("メイリオ", "meiryo.ttc", true),
+        ("游ゴシック", "YuGothR.ttc", true), ("Yu Gothic", "YuGothR.ttc", true), ("游明朝", "yumin.ttf", true), ("Yu Mincho", "yumin.ttf", true),
+        ("BIZ UDPゴシック", "BIZ-UDGothicR.ttc", true), ("BIZ UDゴシック", "BIZ-UDGothicR.ttc", false),
+        ("BIZ UDP明朝", "BIZ-UDMinchoM.ttc", true), ("BIZ UD明朝", "BIZ-UDMinchoM.ttc", false),
+        ("HG丸ゴシックM-PRO", "HGRSMP.TTF", true), ("HGゴシックE", "HGRGE.TTC", false), ("HGPゴシックE", "HGRGE.TTC", true),
+        ("HGゴシックM", "HGRGM.TTC", false), ("HGPゴシックM", "HGRGM.TTC", true), ("HG明朝E", "HGRME.TTC", false), ("HGP明朝E", "HGRME.TTC", true),
+        ("HG明朝B", "HGRMB.TTC", false), ("HGP明朝B", "HGRMB.TTC", true), ("HG創英角ゴシックUB", "HGRSGU.TTC", false),
+        ("HG正楷書体-PRO", "HGRKK.TTC", true), ("HG教科書体", "HGRKK.TTC", false), ("HG行書体", "HGRGY.TTC", false),
+        ("HG創英角ポップ体", "HGRPP1.TTC", false), ("HG平成角ゴシック体W9", "HGRHG9.TTC", false),
+    };
+
+    TextStyle StyleOf(string font, bool bold = false, bool italic = false)
     {
         font = string.IsNullOrWhiteSpace(font) ? "ＭＳ ゴシック" : font.Trim();
-        if (_styles.TryGetValue(font, out var st)) return st;
-        bool mincho = font.Contains("明朝");
-        bool proportional = font.Contains("Ｐ") || font.Contains("P明朝") || font.Contains("Pゴシック");
-        string face = mincho ? (proportional ? "ＭＳ Ｐ明朝" : "ＭＳ 明朝") : (proportional ? "ＭＳ Ｐゴシック" : "ＭＳ ゴシック");
-        string file = mincho ? "msmincho.ttc" : "msgothic.ttc";
-        st = new TextStyle(Clean(font)) { Filename = file };
+        string key = $"{font}|{bold}|{italic}";
+        if (_styles.TryGetValue(key, out var st)) return st;
+        string folded = font.Normalize(System.Text.NormalizationForm.FormKC);
+        var known = KnownFonts.FirstOrDefault(k => folded.Equals(k.Key.Normalize(System.Text.NormalizationForm.FormKC), StringComparison.OrdinalIgnoreCase));
+        string face = font, file;
+        bool proportional;
+        if (known.Key != null) { file = known.File; proportional = known.Proportional; }
+        else if (folded.Length <= 2 || folded.All(ch => char.IsDigit(ch) || char.IsPunctuation(ch)))
+        {
+            // Not a font name (e.g. "3"): Jw_cad shows such text in its standard font.
+            WarnOnce($"Phông chữ \"{font}\" không phải tên phông hợp lệ: đã dùng ＭＳ ゴシック như Jw_cad.");
+            face = "ＭＳ ゴシック"; file = "msgothic.ttc"; proportional = false;
+        }
+        else
+        {
+            bool mincho = folded.Contains("明朝");
+            proportional = folded.Contains("P") || folded.Contains("PRO");
+            file = mincho ? "msmincho.ttc" : "msgothic.ttc"; // AutoCAD uses the face name below; the file is a fallback
+            WarnOnce($"Phông chữ \"{font}\": AutoCAD dùng phông này nếu máy có cài, nếu không sẽ thay bằng phông khác.");
+        }
+        string name = Clean(face) + (bold ? "_B" : "") + (italic ? "_I" : "");
+        if (_doc.TextStyles.TryGetValue(name, out var same)) { _styles[key] = same; return same; }
+        st = new TextStyle(name) { Filename = file };
         _doc.TextStyles.Add(st);
-        // AutoCAD picks a TrueType face (and its character set) from this ACAD xdata,
-        // not from the file name alone: charset 128 = Shift-JIS, 0x31 = fixed pitch, modern family.
+        // AutoCAD picks a TrueType face (and its character set) from this ACAD xdata, not from the file
+        // name alone: charset 128 = Shift-JIS, pitch/family, then the italic (0x02000000) and bold (0x01000000) flags.
         int pitchFamily = proportional ? 0x32 : 0x31;
+        int flags = (italic ? 0x02000000 : 0) | (bold ? 0x01000000 : 0) | (128 << 8) | pitchFamily;
         st.ExtendedData.Add(AcadAppId(), new ExtendedData(new ExtendedDataRecord[]
         {
             new ExtendedDataString(face),
-            new ExtendedDataInteger32((128 << 8) | pitchFamily),
+            new ExtendedDataInteger32(flags),
         }));
-        _styles[font] = st;
+        _styles[key] = st;
         return st;
     }
 
@@ -202,13 +237,24 @@ public sealed class JwwToCadConverter
         return app;
     }
 
-    void Apply(Entity ce, JwwEntity e, double s)
+    // Line patterns are paper lengths in Jw_cad, also inside scaled blocks: _ltK is the scale of the
+    // blocks being built, which AutoCAD applies to the pattern too, so it is divided out.
+    double _ltK = 1;
+
+    void Apply(Entity ce, JwwEntity e, double s, int? penOverride = null)
     {
         ce.Layer = LayerOf(e);
-        int c = e.PenColor;
-        ce.Color = c >= 1 && c <= 9 ? new Color(JwColorToAci[c]) : new Color(7);
-        var lt = LineTypeOf(e);
-        if (lt != null) { ce.LineType = lt; ce.LineTypeScale = s; }
+        ce.Color = ColorOf(penOverride ?? e.PenColor);
+        var lt = e is JwwSolid || e is JwwText ? null : LineTypeOf(e);
+        if (lt != null) { ce.LineType = lt; ce.LineTypeScale = s / _ltK; }
+        if (_st.Width(e) is int w) ce.LineWeight = (LineWeightType)JwwStyles.NearestWeight(w);
+    }
+
+    Color ColorOf(int pen)
+    {
+        var c = _st.PenColor(pen, out string? problem);
+        if (problem != null) WarnOnce($"Màu: {problem}, đã dùng màu trắng/đen (số 7).");
+        return c.Kind == JwwStyles.ColorKind.Index ? new Color(c.Index) : new Color((byte)c.R, (byte)c.G, (byte)c.B);
     }
 
     // ---------- entities ----------
@@ -232,8 +278,7 @@ public sealed class JwwToCadConverter
                 Apply(pt, e, s); Report.Add("Điểm"); yield return pt;
                 break;
             case JwwText t:
-                var txt = TextToCad(t, s);
-                if (txt != null) { Report.Add("Chữ"); yield return txt; }
+                foreach (var x in TextToCad(t, s)) yield return x;
                 break;
             case JwwSolid so:
                 foreach (var sol in SolidToCad(so, s))
@@ -292,51 +337,217 @@ public sealed class JwwToCadConverter
         return a < 0 ? a + 2 * Math.PI : a;
     }
 
-    TextEntity? TextToCad(JwwText t, double s)
-    {
-        if (string.IsNullOrEmpty(t.Text) || t.Height <= 0) { Report.Skip("Chữ rỗng"); return null; }
-        double rot = t.AngleDeg * Math.PI / 180.0;
-        double cell = t.Height * s;
-        double shift = cell * _opt.TextBaselineShift;
-        var txt = new TextEntity
-        {
-            Value = t.Text,
-            InsertPoint = new XYZ(t.StartX * s - Math.Sin(rot) * shift, t.StartY * s + Math.Cos(rot) * shift, 0),
-            Height = cell * _opt.TextHeightFactor,
-            Rotation = rot,
-            WidthFactor = t.Width > 0 ? t.Width / t.Height : 1.0,
-            Style = StyleOf(t.Font),
-        };
-        Apply(txt, t, s);
-        return txt;
-    }
+    /// <summary>The text after embedded codes are replaced, as the verifier must expect it too.</summary>
+    public static string VisibleText(JwwText t, JwEmbeddedText embed, out string? code) => embed.Apply(t.Text, out code);
 
-    static IEnumerable<Solid> SolidToCad(JwwSolid so, double s)
+    IEnumerable<Entity> TextToCad(JwwText t, double s)
     {
-        var p = so.Points;
-        if (so.PenStyle == 101)
+        if (string.IsNullOrEmpty(t.Text) || t.Height <= 0) { Report.Skip("Chữ rỗng"); yield break; }
+        if (t.Text.StartsWith("^@BM", StringComparison.Ordinal))
         {
-            // Filled circle / arc / ellipse: centre, radius, flatness, tilt, start, sweep.
-            double cx = p[0], cy = p[1], r = p[2], flat = p[3], tilt = p[4], start = p[5], sweep = p[6];
-            if (Math.Abs(sweep) < 1e-9) sweep = 2 * Math.PI;
-            int n = Math.Max(8, (int)Math.Ceiling(Math.Abs(sweep) / (2 * Math.PI) * 48));
-            XYZ At(double t)
-            {
-                double x = r * Math.Cos(t), y = r * flat * Math.Sin(t);
-                return new XYZ((cx + x * Math.Cos(tilt) - y * Math.Sin(tilt)) * s, (cy + x * Math.Sin(tilt) + y * Math.Cos(tilt)) * s, 0);
-            }
-            var c = new XYZ(cx * s, cy * s, 0);
-            for (int i = 0; i < n; i++)
-            {
-                var a = At(start + sweep * i / n);
-                var b = At(start + sweep * (i + 1) / n);
-                yield return new Solid { FirstCorner = c, SecondCorner = a, ThirdCorner = b, FourthCorner = b };
-            }
+            var img = ImageToCad(t, s);
+            if (img != null) { Report.Add("Ảnh"); yield return img; }
             yield break;
         }
-        // Points are stored in polygon order; AutoCAD SOLID wants 1, 2, 4, 3.
-        XYZ P(int i) => new(p[i * 2] * s, p[i * 2 + 1] * s, 0);
-        yield return new Solid { FirstCorner = P(0), SecondCorner = P(1), ThirdCorner = P(3), FourthCorner = P(2) };
+        _embed.Scale = Scale(t);
+        string text = VisibleText(t, _embed, out string? code);
+        if (code != null) WarnOnce($"Chữ có mã nhúng (ví dụ {code}): đã thay bằng giá trị lúc chuyển đổi.");
+        var lay = JwTextLayout.Build(t, text);
+        foreach (var n in lay.Notes) WarnOnce($"Chữ: {n}.");
+        double rot = t.AngleDeg * Math.PI / 180.0;
+        double dx = Math.Cos(rot), dy = Math.Sin(rot), nx = -dy, ny = dx;
+        XYZ At(double u, double v) => new((t.StartX + u * dx + v * nx) * s, (t.StartY + u * dy + v * ny) * s, 0);
+        int type = (int)(t.TextType / 10000);
+        bool italic = (type & 1) != 0, bold = (type & 2) != 0;
+        foreach (var r in lay.Runs)
+        {
+            double shift = r.CellH * _opt.TextBaselineShift;
+            // Glyph "up" in the text frame: the column direction for normal glyphs, back along u for upright ones.
+            var p = r.Upright ? At(r.U - shift, r.V) : At(r.U, r.V + shift);
+            var txt = new TextEntity
+            {
+                Value = Escape(r.Text),
+                InsertPoint = p,
+                Height = r.CellH * s * _opt.TextHeightFactor,
+                Rotation = Norm(rot + (r.Upright ? Math.PI / 2 : 0)),
+                WidthFactor = r.CellW / r.CellH,
+                Style = StyleOf(r.Font ?? t.Font, bold ^ r.Bold, italic ^ r.Italic),
+            };
+            Apply(txt, t, s, r.Pen);
+            yield return txt;
+        }
+        foreach (var d in lay.Lines)
+        {
+            var line = new Line(At(d.U1, d.V1), At(d.U2, d.V2));
+            Apply(line, t, s, d.Pen);
+            yield return line;
+        }
+        Report.Add("Chữ");
+    }
+
+    /// <summary>AutoCAD reads %%c, %%d, %%p, %%u, %%o and %%nnn in TEXT; "%%%" is a literal %.</summary>
+    public static string Escape(string v) => v.Contains("%%") ? v.Replace("%", "%%%") : v;
+
+    /// <summary>
+    /// Jw_cad images are texts "^@BM&lt;file&gt;,width,height[,...]" (paper mm; start point = lower left).
+    /// "%temp%name" means the image is stored inside the JWW file.
+    /// </summary>
+    Entity? ImageToCad(JwwText t, double s)
+    {
+        var parts = t.Text[4..].Split(',');
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (parts.Length < 3 || !double.TryParse(parts[1], System.Globalization.NumberStyles.Float, inv, out double w) ||
+            !double.TryParse(parts[2], System.Globalization.NumberStyles.Float, inv, out double h) || w <= 0 || h <= 0)
+        {
+            WarnOnce($"Ảnh \"{t.Text}\": không đọc được kích thước, đã bỏ qua.");
+            return null;
+        }
+        string src = parts[0];
+        byte[]? data = null;
+        string fileName;
+        if (src.StartsWith("%temp%", StringComparison.OrdinalIgnoreCase))
+        {
+            fileName = src[6..];
+            _jww.Images.TryGetValue(fileName, out data);
+            if (data == null) { WarnOnce($"Ảnh {fileName}: không thấy dữ liệu ảnh trong file JWW."); }
+        }
+        else
+        {
+            fileName = Path.GetFileName(src.Replace('\\', '/'));
+            string? near = _opt.SourcePath == null ? null : Path.Combine(Path.GetDirectoryName(_opt.SourcePath) ?? "", fileName);
+            if (File.Exists(src)) data = File.ReadAllBytes(src);
+            else if (near != null && File.Exists(near)) data = File.ReadAllBytes(near);
+            else WarnOnce($"Ảnh liên kết \"{src}\" không có trên máy này: AutoCAD sẽ báo thiếu ảnh cho đến khi chép ảnh vào cạnh file DWG.");
+        }
+        if (parts.Length > 6 && (parts[3] != "0" || parts[4] != "0" || parts[5] != "1" || parts[6] != "0"))
+            WarnOnce($"Ảnh {fileName}: có cắt xén/xoay trong Jw_cad, bản DWG hiện cả ảnh.");
+        if (!_images.TryGetValue(fileName, out var def))
+        {
+            string path = fileName;
+            if (data != null && _opt.OutputPath != null)
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(_opt.OutputPath)) ?? ".";
+                string folder = Path.GetFileNameWithoutExtension(_opt.OutputPath) + "_anh";
+                Directory.CreateDirectory(Path.Combine(dir, folder));
+                path = Path.Combine(folder, fileName);
+                File.WriteAllBytes(Path.Combine(dir, path), data);
+                Report.ImageFiles.Add(Path.Combine(dir, path));
+            }
+            else if (data == null) path = src;
+            var (pw, ph) = data != null ? ImageSize(data) : (1000, (int)Math.Max(1, Math.Round(1000 * h / w)));
+            def = new ACadSharp.Objects.ImageDefinition { Name = Clean(Path.GetFileNameWithoutExtension(fileName)), FileName = path, Size = new XY(pw, ph), IsLoaded = data != null };
+            _doc.ImageDefinitions.Add(def);
+            _images[fileName] = def;
+        }
+        double rot = t.AngleDeg * Math.PI / 180.0;
+        var img = new RasterImage(def)
+        {
+            InsertPoint = new XYZ(t.StartX * s, t.StartY * s, 0),
+            Size = def.Size,
+            // One pixel's size and direction in drawing units.
+            UVector = new XYZ(Math.Cos(rot) * w * s / def.Size.X, Math.Sin(rot) * w * s / def.Size.X, 0),
+            VVector = new XYZ(-Math.Sin(rot) * h * s / def.Size.Y, Math.Cos(rot) * h * s / def.Size.Y, 0),
+        };
+        img.Flags |= ImageDisplayFlags.ShowImage;
+        // AutoCAD needs a clip boundary even when the whole image is shown (pixel corners).
+        img.ClipBoundaryVertices.Add(new XY(-0.5, -0.5));
+        img.ClipBoundaryVertices.Add(new XY(def.Size.X - 0.5, def.Size.Y - 0.5));
+        img.Layer = LayerOf(t);
+        return img;
+    }
+
+    /// <summary>Pixel size of a BMP, PNG, GIF or JPEG image.</summary>
+    public static (int W, int H) ImageSize(byte[] b)
+    {
+        try
+        {
+            if (b.Length > 26 && b[0] == 'B' && b[1] == 'M') return (BitConverter.ToInt32(b, 18), Math.Abs(BitConverter.ToInt32(b, 22)));
+            if (b.Length > 24 && b[0] == 0x89 && b[1] == 'P') return ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]);
+            if (b.Length > 10 && b[0] == 'G' && b[1] == 'I') return (BitConverter.ToUInt16(b, 6), BitConverter.ToUInt16(b, 8));
+            if (b.Length > 4 && b[0] == 0xFF && b[1] == 0xD8)
+                for (int i = 2; i + 9 < b.Length;)
+                {
+                    if (b[i] != 0xFF) { i++; continue; }
+                    int m = b[i + 1], len = (b[i + 2] << 8) | b[i + 3];
+                    if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) return ((b[i + 7] << 8) | b[i + 8], (b[i + 5] << 8) | b[i + 6]);
+                    i += 2 + len;
+                }
+        }
+        catch (Exception) { }
+        return (1000, 1000);
+    }
+
+    IEnumerable<Entity> SolidToCad(JwwSolid so, double s)
+    {
+        var p = so.Points;
+        if (so.PenStyle <= 100)
+        {
+            // Corners are stored in polygon order; AutoCAD SOLID wants 1, 2, 4, 3.
+            XYZ P(int i) => new(p[i * 2] * s, p[i * 2 + 1] * s, 0);
+            return new[] { new Solid { FirstCorner = P(0), SecondCorner = P(1), ThirdCorner = P(3), FourthCorner = P(2) } };
+        }
+        return CircleSolid(so, s);
+    }
+
+    /// <summary>
+    /// Circle solids (CDataSolid with pen style 101 and up): centre, radius, flatness, tilt, start, sweep,
+    /// then a shape flag (101: -1 outside of an arc, 0 sector, 5 segment, 100 full circle) or, for rings
+    /// (105/106), the inner radius. Style 111 is a solid along the circumference.
+    /// </summary>
+    public static List<(XYZ A, XYZ B, XYZ C, XYZ D)> CircleSolidQuads(double[] p, int style, double s)
+    {
+        double cx = p[0], cy = p[1], r = p[2], flat = p[3] > 0 ? p[3] : 1, tilt = p[4], start = p[5], sweep = p[6], extra = p[7];
+        bool full = Math.Abs(sweep) < 1e-12 || Math.Abs(Math.Abs(sweep) - 2 * Math.PI) < 1e-9 || (style == 101 && extra == 100);
+        if (full) { start = 0; sweep = 2 * Math.PI; }
+        int n = Math.Max(8, (int)Math.Ceiling(Math.Abs(sweep) / (2 * Math.PI) * 64));
+        XYZ E(double a, double b, double t)
+        {
+            double x = a * Math.Cos(t), y = b * Math.Sin(t);
+            return new XYZ((cx + x * Math.Cos(tilt) - y * Math.Sin(tilt)) * s, (cy + x * Math.Sin(tilt) + y * Math.Cos(tilt)) * s, 0);
+        }
+        XYZ Unit(double x, double y)
+        {
+            x *= r; y *= r * flat;
+            return new XYZ((cx + x * Math.Cos(tilt) - y * Math.Sin(tilt)) * s, (cy + x * Math.Sin(tilt) + y * Math.Cos(tilt)) * s, 0);
+        }
+        var q = new List<(XYZ, XYZ, XYZ, XYZ)>();
+        double T(int i) => start + sweep * i / n;
+        if (style == 105 || style == 106)
+        {
+            double ri = extra, bi = style == 105 ? ri * flat : r * flat - (r - ri);
+            for (int i = 0; i < n; i++) q.Add((E(r, r * flat, T(i)), E(r, r * flat, T(i + 1)), E(ri, Math.Max(bi, 0), T(i + 1)), E(ri, Math.Max(bi, 0), T(i))));
+            return q;
+        }
+        XYZ hub;
+        if (style == 101 && extra == 5 && !full) hub = E(r, r * flat, start);                        // segment: fan from the chord end
+        else if (style == 101 && extra == -1 && !full)
+        {
+            // Outside of an arc (fillet corner): fan from where the end tangents meet.
+            double m = start + sweep / 2, k = 1 / Math.Cos(sweep / 2);
+            hub = Unit(Math.Cos(m) * k, Math.Sin(m) * k);
+        }
+        else hub = new XYZ(cx * s, cy * s, 0);                                                       // sector / full circle
+        for (int i = 0; i < n; i++) { var a = E(r, r * flat, T(i)); var b = E(r, r * flat, T(i + 1)); q.Add((hub, a, b, b)); }
+        return q;
+    }
+
+    IEnumerable<Entity> CircleSolid(JwwSolid so, double s)
+    {
+        int style = so.PenStyle;
+        if (style == 111)
+        {
+            // Solid along the circumference: drawn as the arc itself.
+            var p = so.Points;
+            WarnOnce("Tô đặc theo đường tròn (kiểu 111): đã vẽ bằng cung/đường tròn.");
+            var arc = new JwwArc { CX = p[0], CY = p[1], Radius = p[2], Flatness = p[3] > 0 ? p[3] : 1, Tilt = p[4], StartAngle = p[5], SweepAngle = p[6], IsFullCircle = p[7] == 100 || Math.Abs(p[6]) < 1e-12 };
+            return new[] { ArcToCad(arc, s) };
+        }
+        if (style != 101 && style != 105 && style != 106)
+            WarnOnce($"Tô đặc kiểu {style} chưa có trong đặc tả Jw_cad: đã tô hình quạt.");
+        else if (style == 101 && so.Points[7] is not (-1 or 0 or 5 or 100))
+            WarnOnce($"Tô đặc tròn có cờ {so.Points[7]} lạ: đã tô hình quạt.");
+        return CircleSolidQuads(so.Points, style, s)
+            .Select(t => (Entity)new Solid { FirstCorner = t.A, SecondCorner = t.B, ThirdCorner = t.D, FourthCorner = t.C }).ToList();
     }
 
     IEnumerable<Entity> DimensionToCad(JwwDimension d, double s)
@@ -348,8 +559,7 @@ public sealed class JwwToCadConverter
             var line = new Line(new XYZ(l.X1 * s, l.Y1 * s, 0), new XYZ(l.X2 * s, l.Y2 * s, 0));
             Apply(line, l, s); yield return line;
         }
-        var txt = TextToCad(d.Text, s);
-        if (txt != null) yield return txt;
+        foreach (var x in TextToCad(d.Text, s)) yield return x;
         foreach (var p in d.Points)
             if (p.PenStyle == 100) foreach (var m in MarkerToCad(p, s)) yield return m;
     }
@@ -446,7 +656,9 @@ public sealed class JwwToCadConverter
 
     Insert? InsertToCad(JwwBlockInsert bi, double s, int depth)
     {
-        var block = BlockFor(bi.BlockNumber, s, depth);
+        double k = _ltK * Math.Sqrt(Math.Abs(bi.ScaleX * bi.ScaleY));
+        if (k < 1e-12) k = 1;
+        var block = BlockFor(bi.BlockNumber, s, depth, k);
         if (block == null) { Report.Skip("Block thiếu định nghĩa"); return null; }
         var ins = new Insert(block)
         {
@@ -459,22 +671,31 @@ public sealed class JwwToCadConverter
         return ins;
     }
 
-    BlockRecord? BlockFor(uint num, double s, int depth)
+    // One AutoCAD block per Jw_cad block, drawing scale and pattern scale (see _ltK).
+    readonly Dictionary<(uint num, double scale, double k), BlockRecord> _blocksK = new();
+
+    BlockRecord? BlockFor(uint num, double s, int depth, double ltK)
     {
-        if (_blocks.TryGetValue((num, s), out var br)) return br;
+        ltK = Math.Round(ltK, 9);
+        if (_blocksK.TryGetValue((num, s, ltK), out var br)) return br;
         if (!_blockDefs.TryGetValue(num, out var def) || depth > 16) return null;
-        string baseName = Clean(def.Name.Replace("@@SfigorgFlag@@4", "").Replace("@@SfigorgFlag@@", ""));
+        string baseName = Clean(System.Text.RegularExpressions.Regex.Replace(def.Name, "@@SfigorgFlag@@\\d*", ""));
         if (baseName.Length == 0) baseName = $"JW_BLOCK_{num}";
         string name = baseName;
-        int k = 1;
-        while (_doc.BlockRecords.Contains(name) || _blocks.Values.Any(b => b.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-            name = $"{baseName}_{++k}";
+        int n = 1;
+        while (_doc.BlockRecords.Contains(name)) name = $"{baseName}_{++n}";
         br = new BlockRecord(name);
-        _blocks[(num, s)] = br;
+        _blocksK[(num, s, ltK)] = br;
         _doc.BlockRecords.Add(br);
-        foreach (var e in def.Entities)
-            foreach (var ce in ToCad(e, s, depth + 1))
-                br.Entities.Add(ce);
+        double saved = _ltK;
+        _ltK = ltK;
+        try
+        {
+            foreach (var e in def.Entities)
+                foreach (var ce in ToCad(e, s, depth + 1).ToList())
+                    br.Entities.Add(ce);
+        }
+        finally { _ltK = saved; }
         return br;
     }
 }

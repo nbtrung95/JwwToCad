@@ -85,4 +85,25 @@ public sealed class JwwDocument
     public List<JwwEntity> Entities = new();
     public List<JwwBlockDef> Blocks = new();
     public int ImageCount;
+    /// <summary>Images stored inside the file (name without .gz -> decompressed bytes).</summary>
+    public Dictionary<string, byte[]> Images = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Settings read from the header; null when the header layout was not recognised.</summary>
+    public JwwHeader? Header;
+}
+
+/// <summary>Drawing settings from the JWW header (colours and line types).</summary>
+public sealed class JwwHeader
+{
+    // Index = Jw pen colour number: 0-9 standard, 100-356 SXF colours. COLORREF (0x00BBGGRR).
+    public Dictionary<int, uint> ScreenColor = new();
+    public Dictionary<int, uint> PrintColor = new();
+    public Dictionary<int, int> ScreenWidth = new();
+    public Dictionary<int, int> PrintWidth = new();
+    public Dictionary<int, double> PointRadius = new();
+    public Dictionary<int, string> ColorName = new();
+    /// <summary>Line type dot pattern (bit 1 = ink), dots per unit, screen pitch, printer pitch.</summary>
+    public Dictionary<int, (uint Bits, int UnitDots, int Pitch, int PrintPitch)> LineTypes = new();
+    /// <summary>SXF user line types (index = Jw line type 30+n): name and dash/gap lengths in paper mm.</summary>
+    public Dictionary<int, (string Name, double[] Pitch)> SxfLineTypes = new();
+    public int MaxDrawWidth;
 }

@@ -30,6 +30,12 @@ public sealed class ConvertOptions
     /// <summary>Raise the baseline by this part of the cell, because Jw_cad places the bottom of the cell
     /// (below the descenders) where AutoCAD places the baseline.</summary>
     public double TextBaselineShift { get; set; } = 0.12;
+
+    /// <summary>The JWW file (for embedded file-name codes and linked images).</summary>
+    public string? SourcePath { get; set; }
+
+    /// <summary>The drawing being written: images from inside the JWW file are saved next to it.</summary>
+    public string? OutputPath { get; set; }
 }
 
 public sealed class ConvertReport
@@ -38,6 +44,8 @@ public sealed class ConvertReport
     public Dictionary<string, int> Skipped { get; } = new();
     public List<string> Warnings { get; } = new();
     public double MainScale { get; set; }
+    /// <summary>Image files written next to the drawing.</summary>
+    public List<string> ImageFiles { get; } = new();
 
     internal void Add(string kind, int n = 1) => Written[kind] = Written.GetValueOrDefault(kind) + n;
     internal void Skip(string kind) => Skipped[kind] = Skipped.GetValueOrDefault(kind) + 1;
