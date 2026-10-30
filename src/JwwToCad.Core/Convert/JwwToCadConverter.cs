@@ -66,12 +66,55 @@ public sealed class JwwToCadConverter
         _doc.Header.InsUnits = ACadSharp.Types.Units.UnitsType.Millimeters;
         CreateLayers();
         foreach (var b in _jww.Blocks) _blockDefs[b.Number] = b;
-        foreach (var e in _jww.Entities)
-            foreach (var ce in ToCad(e, Scale(e), 0))
-                _doc.Entities.Add(ce);
+        if (_opt.Mode == CoordinateMode.Paper || !_opt.KeepLayoutForOtherScales)
+        {
+            foreach (var e in _jww.Entities)
+                foreach (var ce in ToCad(e, Scale(e), 0))
+                    _doc.Entities.Add(ce);
+        }
+        else
+            BuildRealSizeWithLayout();
         if (_jww.ImageCount > 0)
             Report.Warnings.Add($"File có {_jww.ImageCount} ảnh chèn, bản này chưa chuyển ảnh.");
         return _doc;
+    }
+
+    // Real size for the main scale. Groups drawn at another scale (title block at 1/1, details at 1/10...)
+    // go into one block per group, drawn in that group's own real size and inserted at main/own scale,
+    // so the sheet keeps the same layout as in Jw_cad.
+    void BuildRealSizeWithLayout()
+    {
+        double main = _jww.Entities
+            .GroupBy(e => Scale(e))
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key).FirstOrDefault(1.0);
+        Report.MainScale = main;
+        var groupBlocks = new Dictionary<int, BlockRecord>();
+        foreach (var e in _jww.Entities)
+        {
+            double s = Scale(e);
+            if (Math.Abs(s - main) < 1e-9)
+            {
+                foreach (var ce in ToCad(e, s, 0)) _doc.Entities.Add(ce);
+                continue;
+            }
+            int g = e.LayerGroup & 15;
+            if (!groupBlocks.TryGetValue(g, out var br))
+            {
+                string name = $"JW_NHOM_{g:X}_TL_1-{s.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}";
+                br = new BlockRecord(name);
+                _doc.BlockRecords.Add(br);
+                groupBlocks[g] = br;
+                double k = main / s;
+                _doc.Entities.Add(new Insert(br)
+                {
+                    InsertPoint = XYZ.Zero, XScale = k, YScale = k, ZScale = 1,
+                    Layer = _doc.Layers["0"],
+                });
+                Report.Warnings.Add($"Nhóm lớp {g:X} (tỉ lệ 1/{s:0.###}) khác tỉ lệ chính 1/{main:0.###}: để trong block {name} để giữ bố cục bản vẽ.");
+            }
+            foreach (var ce in ToCad(e, s, 0)) br.Entities.Add(ce);
+        }
     }
 
     double Scale(JwwEntity e) =>

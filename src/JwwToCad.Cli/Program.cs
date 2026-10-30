@@ -13,6 +13,7 @@ if (args.Length == 0)
     Console.WriteLine("Cách dùng: jwwtocad <file.jww | thư mục> [đầu ra] [--paper] [--dxf]");
     return 1;
 }
+if (args[0] == "info") return Info.Run(args[1]);
 if (args[0] == "preview") return Preview.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
 
 var opt = new ConvertOptions();
@@ -147,6 +148,31 @@ static class Preview
         double w = maxX - minX, h2 = maxY - minY, sw = Math.Max(w, h2) / 2500;
         File.WriteAllText(svgPath,
             $"<svg xmlns='http://www.w3.org/2000/svg' viewBox='{F(minX - w * 0.02)} {F(-maxY - h2 * 0.02)} {F(w * 1.04)} {F(h2 * 1.04)}' width='{F(w > h2 ? 2400 : 2400 * w / h2)}' height='{F(w > h2 ? 2400 * h2 / w : 2400)}' stroke-width='{F(sw)}'><rect x='{F(minX - w)}' y='{F(-maxY - h2)}' width='{F(w * 3)}' height='{F(h2 * 3)}' fill='#fff'/>{sb}</svg>");
+        return 0;
+    }
+}
+
+static class Info
+{
+    public static int Run(string path)
+    {
+        var d = JwwToCad.Core.Jww.JwwReader.Read(path);
+        for (int g = 0; g < 16; g++)
+        {
+            var es = d.Entities.Where(e => e.LayerGroup == g).ToList();
+            if (es.Count == 0) continue;
+            double x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+            void P(double x, double y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
+            foreach (var e in es)
+                switch (e) { case JwwToCad.Core.Jww.JwwLine l: P(l.X1, l.Y1); P(l.X2, l.Y2); break;
+                             case JwwToCad.Core.Jww.JwwText t: P(t.StartX, t.StartY); break;
+                             case JwwToCad.Core.Jww.JwwBlockInsert b: P(b.X, b.Y); break; }
+            var types = string.Join(",", es.GroupBy(e => e.GetType().Name).Select(k => $"{k.Key[3..]}={k.Count()}"));
+            var layers = string.Join(",", es.Select(e => e.Layer).Distinct().OrderBy(x => x).Select(x => x.ToString("X")));
+            Console.WriteLine($"G{g:X} '{d.Groups[g].Name}' scale={d.Groups[g].Scale} state={d.Groups[g].State} layers[{layers}] paper=({x0:F0},{y0:F0})-({x1:F0},{y1:F0}) {types}");
+        }
+        foreach (var b in d.Blocks) Console.WriteLine($"Block {b.Number} '{b.Name}' n={b.Entities.Count}");
+        foreach (var bi in d.Entities.OfType<JwwToCad.Core.Jww.JwwBlockInsert>().Take(20)) Console.WriteLine($"Insert #{bi.BlockNumber} g{bi.LayerGroup:X} at ({bi.X:F1},{bi.Y:F1}) s=({bi.ScaleX},{bi.ScaleY})");
         return 0;
     }
 }
