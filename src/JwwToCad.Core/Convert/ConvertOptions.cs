@@ -15,6 +15,17 @@ public sealed class ConvertOptions
     public CoordinateMode Mode { get; set; } = CoordinateMode.RealSize;
     public ACadVersion Version { get; set; } = ACadVersion.AC1027; // AutoCAD 2013
     public bool SkipTemporaryPoints { get; set; } = true;
+
+    /// <summary>
+    /// AutoCAD sizes TrueType text by roughly the cap height, while Jw_cad's text height is the full
+    /// character cell. Measured in AutoCAD 2026 with ＭＳ ゴシック: the cell is about 1.24 × the AutoCAD
+    /// height, so the AutoCAD height is the Jw height × 0.8.
+    /// </summary>
+    public double TextHeightFactor { get; set; } = 0.8;
+
+    /// <summary>Raise the baseline by this part of the cell, because Jw_cad places the bottom of the cell
+    /// (below the descenders) where AutoCAD places the baseline.</summary>
+    public double TextBaselineShift { get; set; } = 0.12;
 }
 
 public sealed class ConvertReport

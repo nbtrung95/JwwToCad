@@ -251,12 +251,15 @@ public sealed class JwwToCadConverter
     TextEntity? TextToCad(JwwText t, double s)
     {
         if (string.IsNullOrEmpty(t.Text) || t.Height <= 0) { Report.Skip("Chữ rỗng"); return null; }
+        double rot = t.AngleDeg * Math.PI / 180.0;
+        double cell = t.Height * s;
+        double shift = cell * _opt.TextBaselineShift;
         var txt = new TextEntity
         {
             Value = t.Text,
-            InsertPoint = new XYZ(t.StartX * s, t.StartY * s, 0),
-            Height = t.Height * s,
-            Rotation = t.AngleDeg * Math.PI / 180.0,
+            InsertPoint = new XYZ(t.StartX * s - Math.Sin(rot) * shift, t.StartY * s + Math.Cos(rot) * shift, 0),
+            Height = cell * _opt.TextHeightFactor,
+            Rotation = rot,
             WidthFactor = t.Width > 0 ? t.Width / t.Height : 1.0,
             Style = StyleOf(t.Font),
         };
