@@ -13,6 +13,23 @@ if (args.Length == 0)
     Console.WriteLine("Cách dùng: jwwtocad <file.jww | thư mục> [đầu ra] [--paper] [--dxf]");
     return 1;
 }
+if (args[0] == "verify")
+{
+    // jwwtocad verify <jww file|folder> <dwg file|folder> [--paper]
+    bool vp = args.Contains("--paper");
+    var va = args.Where(a => !a.StartsWith("--")).ToList();
+    if (Directory.Exists(va[1]))
+    {
+        int rc = 0;
+        foreach (var j in Directory.GetFiles(va[1 - 0], "*.jww"))
+        {
+            var dwgFile = Path.Combine(va[2], Path.GetFileNameWithoutExtension(j) + ".dwg");
+            rc |= Verify.Run(j, dwgFile, vp);
+        }
+        return rc;
+    }
+    return Verify.Run(va[1], va[2], vp);
+}
 if (args[0] == "info") return Info.Run(args[1]);
 if (args[0] == "preview") return Preview.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
 
@@ -42,6 +59,8 @@ foreach (var f in files)
         Console.WriteLine($"OK  {Path.GetFileName(f)} -> {Path.GetFileName(outPath)} ({sw.ElapsedMilliseconds} ms)");
         Console.WriteLine("    " + rep);
         foreach (var w in rep.Warnings) Console.WriteLine("    ! " + w);
+        // Every export is read back and compared with the JWW source.
+        if (!args.Contains("--no-verify") && Verify.Run(f, outPath, opt.Mode == CoordinateMode.Paper, quiet: true) != 0) failed++;
     }
     catch (Exception ex)
     {
