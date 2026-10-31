@@ -133,10 +133,11 @@ public sealed class JwwToCadConverter
                 string jwName = Clean(grp.LayerNames[l]);
                 if (jwName.Length > 0) name += " " + jwName;
                 while (!used.Add(name)) name += "_";
-                var layer = new Layer(name)
-                {
-                    IsOn = grp.State != 0 && grp.LayerState[l] != 0,
-                };
+                bool on = grp.State != 0 && grp.LayerState[l] != 0;
+                var layer = new Layer(name) { IsOn = on };
+                // A hidden Jw_cad layer hides everything on it, blocks included. AutoCAD hides a block
+                // on an "off" layer only partly (just its layer-0 parts), so hidden layers are also frozen.
+                if (!on) layer.Flags |= LayerFlags.Frozen;
                 _layers[g, l] = layer;
             }
         }

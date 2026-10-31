@@ -44,6 +44,7 @@ static class SelfTest
         Damage("sai độ dày nét", d => { foreach (var l in All(d).OfType<Line>().Where(l => l.LineWeight != LineWeightType.ByLayer)) l.LineWeight = LineWeightType.W100; });
         Damage("dịch chữ", d => { foreach (var t in All(d).OfType<TextEntity>().Where((e, i) => i % 5 == 0)) t.InsertPoint += new CSMath.XYZ(30, 0, 0); });
         Damage("đảo đầu cung", d => { foreach (var a in All(d).OfType<Arc>()) (a.StartAngle, a.EndAngle) = (a.EndAngle, a.StartAngle + 0.3); });
+        Damage("bật lại layer ẩn", d => { foreach (var l in d.Layers) { l.IsOn = true; l.Flags &= ~ACadSharp.Tables.LayerFlags.Frozen; } });
         Damage("bỏ ảnh", d =>
         {
             foreach (var i in d.Entities.OfType<RasterImage>().ToList()) d.Entities.Remove(i);
@@ -233,7 +234,10 @@ static class SelfTest
         dim.Points.Add(new JwwPoint { PenStyle = 100, PenColor = 1, X = 460, Y = -400, Code = 6, Angle = Math.PI, Scale = 1 });
         Add(dim);
 
-        // 9) A hidden layer.
+        // 9) A block placed on a hidden layer: Jw_cad hides all of it, whatever layers its parts are on.
+        Add(new JwwBlockInsert { BlockNumber = 1, LayerGroup = 3, Layer = 5, X = 500, Y = -100, ScaleX = 1, ScaleY = 1 });
+
+        // 10) A hidden layer.
         Add(new JwwLine { LayerGroup = 3, Layer = 5, PenColor = 2, X1 = 0, Y1 = 50, X2 = 50, Y2 = 50 });
         return jww;
     }

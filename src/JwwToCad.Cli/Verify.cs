@@ -15,7 +15,7 @@ using JwwToCad.Core.Jww;
 static class Verify
 {
     // Attributes as seen in the drawing: colour as RGB (index colours resolved), pattern in world units.
-    record Attr(int Rgb, bool Index7, double[] Pattern, int Weight);
+    record Attr(int Rgb, bool Index7, double[] Pattern, int Weight, bool Vis);
     record Seg(double X1, double Y1, double X2, double Y2, Attr A);
     record Curve(double X, double Y, double R1, double R2, bool Full, (double X, double Y) P1, (double X, double Y) P2, Attr A);
     record Txt(double X, double Y, double H, double Rot, double Wf, string S, Attr A, bool Bold, bool Italic, string Face);
@@ -70,7 +70,7 @@ static class Verify
 
         var flat = new Flat();
         foreach (var l in doc.Layers) if (!l.IsOn) flat.LayersOff.Add(l.Name);
-        foreach (var e in doc.Entities) FlattenCad(e, T.Id, flat, 0, null);
+        foreach (var e in doc.Entities) FlattenCad(e, T.Id, flat, 0, null, null, true);
 
         var segIdx = new Grid<Seg>(s => ((s.X1 + s.X2) / 2, (s.Y1 + s.Y2) / 2), flat.Segs, main);
         var curIdx = new Grid<Curve>(c => (c.X, c.Y), flat.Curves, main);
@@ -180,6 +180,17 @@ static class Verify
             return (a.CX + x * Math.Cos(a.Tilt) - y * Math.Sin(a.Tilt), a.CY + x * Math.Sin(a.Tilt) + y * Math.Cos(a.Tilt));
         }
 
+        // Jw_cad shows an object when its layer and every enclosing block's layer are shown.
+        bool On(JwwEntity x) => jww.Groups[x.LayerGroup & 15].State != 0 && jww.Groups[x.LayerGroup & 15].LayerState[x.Layer & 15] != 0;
+        bool chainVis = true;
+        void VisCheck(JwwEntity e, IEnumerable<Attr> found, string where)
+        {
+            var l = found.ToList();
+            if (l.Count == 0) return;
+            bool want = chainVis && On(e);
+            Count("Ẩn/hiện", l.Any(a => a.Vis == want), $"{where}: Jw_cad {(want ? "hiện" : "ẩn")}, AutoCAD {(want ? "ẩn" : "hiện")}");
+        }
+
         void Check(JwwEntity e, T t, int depth)
         {
             switch (e)
@@ -193,6 +204,7 @@ static class Verify
                         (D(s.X1, s.Y1, x2, y2) < tol && D(s.X2, s.Y2, x1, y1) < tol)).ToList();
                     Count("Đường", c.Count > 0, $"({F(x1)},{F(y1)})-({F(x2)},{F(y2)}) không có trong DWG");
                     CheckAttrs("đường", e, c, s => s.A, $"({F(x1)},{F(y1)})", true);
+                    VisCheck(e, c.Select(k => k.A), $"đường ({F(x1)},{F(y1)})");
                     break;
                 }
                 case JwwArc a:
@@ -213,6 +225,7 @@ static class Verify
                     string kind = ell ? (a.IsFullCircle ? "Elip" : "Cung elip") : (a.IsFullCircle ? "Đường tròn" : "Cung");
                     Count(kind, c.Count > 0, $"tâm ({F(cx)},{F(cy)}) r={F(r1)}" + (a.IsFullCircle ? "" : $", đầu ({F(p1.Item1)},{F(p1.Item2)}) cuối ({F(p2.Item1)},{F(p2.Item2)})"));
                     CheckAttrs(kind.ToLowerInvariant(), e, c, k => k.A, $"tâm ({F(cx)},{F(cy)})", true);
+                    VisCheck(e, c.Select(k => k.A), $"{kind} tâm ({F(cx)},{F(cy)})");
                     break;
                 }
                 case JwwText tx: CheckText(tx, t, "Chữ"); break;
@@ -234,7 +247,10 @@ static class Verify
                 {
                     if (!blocks.TryGetValue(bi.BlockNumber, out var def) || depth > 16) { Count("Block", false, $"thiếu định nghĩa #{bi.BlockNumber}"); break; }
                     var bt = T.Place(bi.X, bi.Y, bi.ScaleX, bi.ScaleY, bi.AngleRad).Then(t);
+                    bool savedVis = chainVis;
+                    chainVis = chainVis && On(bi);
                     foreach (var be in def.Entities) Check(be, bt, depth + 1);
+                    chainVis = savedVis;
                     Count("Block", true);
                     break;
                 }
@@ -250,6 +266,7 @@ static class Verify
                 bool corners = Enumerable.Range(0, 4).All(i => { var (a, b) = t.Ap(p[2 * i], p[2 * i + 1]); return solPtIdx.Near(a, b, tol).Any(); });
                 var c = solIdx.Near(x, y, tol).ToList();
                 Count("Tô đặc", c.Count > 0 && corners, $"tâm ({F(x)},{F(y)})");
+                VisCheck(so, c.Select(k => k.A), $"tô đặc ({F(x)},{F(y)})");
                 CheckSolidColor(so, c, $"({F(x)},{F(y)})");
                 return;
             }
@@ -331,6 +348,7 @@ static class Verify
                 var cands = txtIdx.Near(x, y, cell * 0.05 + tol).Where(c => c.S == want).ToList();
                 if (cands.Count == 0) { Count(kind, false, $"'{r.Text}' (của '{tx.Text}') tại ({F(x)},{F(y)}) không có trong DWG"); continue; }
                 var c = cands.OrderBy(c => D(c.X, c.Y, x, y)).First();
+                VisCheck(tx, cands.Select(k => k.A), $"chữ '{r.Text}'");
                 double hr = c.H / cell;
                 double dr = Math.Abs(Math.IEEERemainder(c.Rot - grot, 2 * Math.PI));
                 double wf = r.CellW / r.CellH;
@@ -439,7 +457,7 @@ static class Verify
 
     // ---- reading the drawing ----
 
-    static Attr AttrOf(Entity e, T t, Insert? parent)
+    static Attr AttrOf(Entity e, T t, Insert? parent, bool vis)
     {
         var col = e.Color;
         if (col.IsByLayer) col = e.Layer?.Color ?? new Color(7);
@@ -457,12 +475,19 @@ static class Verify
         double k = e.LineTypeScale * t.Scale;
         var pat = lt == null ? Array.Empty<double>() : lt.Segments.Select(s => s.Length * k).ToArray();
         int w = e.LineWeight switch { LineWeightType.ByLayer or LineWeightType.ByBlock or LineWeightType.Default => -1, var x => (int)x };
-        return new Attr(rgb, i7, pat, w);
+        return new Attr(rgb, i7, pat, w, vis);
     }
 
-    static void FlattenCad(Entity e, T t, Flat f, int depth, Insert? parent)
+    // Shown in AutoCAD: the object's layer (layer 0 inside a block takes the insert's) is on and not
+    // frozen, and no enclosing insert sits on a frozen layer.
+    static bool LayerShown(Layer? l) => l == null || (l.IsOn && !l.Flags.HasFlag(LayerFlags.Frozen));
+
+    static void FlattenCad(Entity e, T t, Flat f, int depth, Insert? parent, Layer? parentLayer, bool chainShown)
     {
-        var a = AttrOf(e, t, parent);
+        var own = e.Layer;
+        var eff = own != null && own.Name == "0" && parentLayer != null ? parentLayer : own;
+        bool shown = chainShown && LayerShown(eff);
+        var a = AttrOf(e, t, parent, shown);
         switch (e)
         {
             case Line l:
@@ -528,7 +553,8 @@ static class Verify
             case Insert ins when depth < 20:
             {
                 var bt = T.Place(ins.InsertPoint.X, ins.InsertPoint.Y, ins.XScale, ins.YScale, ins.Rotation).Then(t);
-                foreach (var be in ins.Block.Entities) FlattenCad(be, bt, f, depth + 1, ins);
+                bool frozen = ins.Layer != null && ins.Layer.Flags.HasFlag(LayerFlags.Frozen);
+                foreach (var be in ins.Block.Entities) FlattenCad(be, bt, f, depth + 1, ins, eff, chainShown && !frozen);
                 break;
             }
         }
