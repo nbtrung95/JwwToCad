@@ -41,8 +41,10 @@ public sealed class JwTextLayout
     /// <summary>Half-width (1 byte in Shift-JIS) characters take half a cell.</summary>
     public static bool IsHalf(char c) => c < 0x80 || (c >= 0xFF61 && c <= 0xFF9F) || (c != '\0' && Sjis.GetByteCount(c.ToString()) == 1);
 
-    // Full-width characters that Jw_cad turns sideways in vertical writing (long marks, brackets, dashes).
-    const string SidewaysInVertical = "ー－―‐～〜（）「」『』【】〔〕［］｛｝＜＞〈〉《》＝…‥→←";
+    // Full-width characters that turn sideways in vertical writing (the vertical forms of the Japanese
+    // fonts: long vowel mark, brackets, wave dash, ellipsis). The full-width minus "－", "＝" and arrows
+    // stay as they are: checked on a Jw_cad screen, "64－36" written vertically keeps a flat "－".
+    const string SidewaysInVertical = "ー―‐～〜（）「」『』【】〔〕［］｛｝＜＞〈〉《》…‥";
 
     public static JwTextLayout Build(JwwText t, string text)
     {
