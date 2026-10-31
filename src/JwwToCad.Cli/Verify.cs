@@ -482,6 +482,19 @@ static class Verify
     // frozen, and no enclosing insert sits on a frozen layer.
     static bool LayerShown(Layer? l) => l == null || (l.IsOn && !l.Flags.HasFlag(LayerFlags.Frozen));
 
+    static (bool Bold, bool Italic, string Face) StyleFlags(TextStyle? st)
+    {
+        bool bold = false, italic = false; string face = "";
+        if (st != null)
+            foreach (var (app, xd) in st.ExtendedData)
+                foreach (var rec in xd.Records)
+                {
+                    if (rec is ACadSharp.XData.ExtendedDataString s) face = s.Value;
+                    if (rec is ACadSharp.XData.ExtendedDataInteger32 n) { bold = (n.Value & 0x01000000) != 0; italic = (n.Value & 0x02000000) != 0; }
+                }
+        return (bold, italic, face);
+    }
+
     static void FlattenCad(Entity e, T t, Flat f, int depth, Insert? parent, Layer? parentLayer, bool chainShown)
     {
         var own = e.Layer;
@@ -521,16 +534,30 @@ static class Verify
             case TextEntity tx:
             {
                 var (x, y) = t.Ap(tx.InsertPoint.X, tx.InsertPoint.Y);
-                bool bold = false, italic = false; string face = "";
-                var st = tx.Style;
-                if (st != null)
-                    foreach (var (app, xd) in st.ExtendedData)
-                        foreach (var rec in xd.Records)
-                        {
-                            if (rec is ACadSharp.XData.ExtendedDataString s) face = s.Value;
-                            if (rec is ACadSharp.XData.ExtendedDataInteger32 n) { bold = (n.Value & 0x01000000) != 0; italic = (n.Value & 0x02000000) != 0; }
-                        }
+                var (bold, italic, face) = StyleFlags(tx.Style);
                 f.Txts.Add(new Txt(x, y, tx.Height * t.Scale, tx.Rotation + t.Rot, tx.WidthFactor, tx.Value, a, bold, italic, face)); break;
+            }
+            case MText mt:
+            {
+                // One line per character of a vertical text: first baseline one height below the top,
+                // then 5/3 × height × spacing factor apart (AutoCAD's rule for "exact" spacing).
+                double H = mt.Height, rot = Math.Atan2(mt.AlignmentPoint.Y, mt.AlignmentPoint.X);
+                if (mt.AlignmentPoint.X == 0 && mt.AlignmentPoint.Y == 0) rot = 0;
+                double pitch = 5.0 / 3.0 * H * (mt.LineSpacing > 0 ? mt.LineSpacing : 1);
+                string v = mt.Value; double wf = 1;
+                var m = System.Text.RegularExpressions.Regex.Match(v, @"^\\W([0-9.]+);");
+                if (m.Success) { wf = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture); v = v[m.Length..]; }
+                var lines = v.Split("\\P");
+                var (bold, italic, face) = StyleFlags(mt.Style);
+                for (int k = 0; k < lines.Length; k++)
+                {
+                    double d = H + k * pitch;
+                    double bx = mt.InsertPoint.X + Math.Sin(rot) * d, by = mt.InsertPoint.Y - Math.Cos(rot) * d;
+                    var (x, y) = t.Ap(bx, by);
+                    string line = lines[k].Replace("\\{", "{").Replace("\\}", "}").Replace("\\\\", "\\");
+                    f.Txts.Add(new Txt(x, y, H * t.Scale, rot + t.Rot, wf, line, a, bold, italic, face));
+                }
+                break;
             }
             case Solid so:
             {

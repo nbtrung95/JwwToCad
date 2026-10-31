@@ -75,6 +75,7 @@ public sealed class JwwToCadConverter
         }
         else
             BuildRealSizeWithLayout();
+        AddTextGroups();
         return _doc;
     }
 
@@ -360,6 +361,40 @@ public sealed class JwwToCadConverter
         XYZ At(double u, double v) => new((t.StartX + u * dx + v * nx) * s, (t.StartY + u * dy + v * ny) * s, 0);
         int type = (int)(t.TextType / 10000);
         bool italic = (type & 1) != 0, bold = (type & 2) != 0;
+
+        // Vertical text made of upright characters only: one MTEXT, one character per line, so it stays
+        // one object as in Jw_cad. AutoCAD puts the first baseline one text height below the top and the
+        // next ones 5/3 × height × spacing factor apart (measured in AutoCAD 2026).
+        var r0 = lay.Runs.FirstOrDefault();
+        if (lay.Runs.Count > 1 && lay.Lines.Count == 0 && r0 != null && lay.Runs.All(r => r.Upright && r.V == 0 && r.CellW == r0.CellW && r.CellH == r0.CellH
+                && r.Pen == r0.Pen && r.Bold == r0.Bold && r.Italic == r0.Italic && r.Font == r0.Font && r.Text.Length == 1))
+        {
+            double pitch = lay.Runs.Count > 1 ? lay.Runs[1].U - lay.Runs[0].U : r0.CellH;
+            bool even = lay.Runs.Zip(lay.Runs.Skip(1)).All(z => Math.Abs(z.Second.U - z.First.U - pitch) < 1e-9);
+            double H = r0.CellH * _opt.TextHeightFactor;
+            double factor = pitch / (5.0 / 3.0 * H);
+            if (even && factor >= 0.25 && factor <= 4)
+            {
+                double topU = r0.U - r0.CellH * _opt.TextBaselineShift - H; // first baseline minus one height
+                var mt = new MText
+                {
+                    Value = MTextValue(lay.Runs.Select(r => r.Text), r0.CellW / r0.CellH),
+                    InsertPoint = At(topU, 0),
+                    Height = H * s,
+                    AttachmentPoint = AttachmentPointType.TopLeft,
+                    LineSpacingStyle = LineSpacingStyleType.Exact,
+                    LineSpacing = factor,
+                    AlignmentPoint = new XYZ(Math.Cos(rot + Math.PI / 2), Math.Sin(rot + Math.PI / 2), 0), // x axis direction
+                    Style = StyleOf(r0.Font ?? t.Font, bold ^ r0.Bold, italic ^ r0.Italic),
+                };
+                Apply(mt, t, s, r0.Pen);
+                Report.Add("Chữ");
+                yield return mt;
+                yield break;
+            }
+        }
+
+        var parts = new List<Entity>();
         foreach (var r in lay.Runs)
         {
             double shift = r.CellH * _opt.TextBaselineShift;
@@ -375,15 +410,43 @@ public sealed class JwwToCadConverter
                 Style = StyleOf(r.Font ?? t.Font, bold ^ r.Bold, italic ^ r.Italic),
             };
             Apply(txt, t, s, r.Pen);
+            parts.Add(txt);
             yield return txt;
         }
         foreach (var d in lay.Lines)
         {
             var line = new Line(At(d.U1, d.V1), At(d.U2, d.V2));
             Apply(line, t, s, d.Pen);
+            parts.Add(line);
             yield return line;
         }
+        // One Jw_cad text drawn as several pieces (spacing, mixed sizes or colours): keep them together
+        // as an AutoCAD group so they are picked as one.
+        if (parts.Count > 1) _textGroups.Add(parts);
         Report.Add("Chữ");
+    }
+
+    readonly List<List<Entity>> _textGroups = new();
+
+    void AddTextGroups()
+    {
+        int n = 0;
+        foreach (var parts in _textGroups)
+        {
+            // Groups can only hold objects of the drawing itself, not of blocks.
+            if (!parts.All(e => e.Owner is BlockRecord br && br.Name == BlockRecord.ModelSpaceName)) continue;
+            var g = new ACadSharp.Objects.Group($"JW_CHU_{++n}") { Description = "Jw_cad text", Selectable = true };
+            _doc.Groups.Add(g);
+            g.AddRange(parts);
+        }
+    }
+
+    /// <summary>MTEXT content: one entry per line, AutoCAD's \, {, } escaped, width factor in front.</summary>
+    public static string MTextValue(IEnumerable<string> lines, double widthFactor)
+    {
+        static string Esc(string v) => v.Replace("\\", "\\\\").Replace("{", "\\{").Replace("}", "\\}");
+        string w = Math.Abs(widthFactor - 1) < 1e-9 ? "" : $"\\W{widthFactor.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)};";
+        return w + string.Join("\\P", lines.Select(l => Esc(Escape(l))));
     }
 
     /// <summary>AutoCAD reads %%c, %%d, %%p, %%u, %%o and %%nnn in TEXT; "%%%" is a literal %.</summary>
