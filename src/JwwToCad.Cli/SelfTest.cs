@@ -54,6 +54,12 @@ static class SelfTest
             for (int i = want.Count - 1; i >= 0; i--) d.Entities.Add(want[i]);
             if (!d.Entities.SkipWhile(e => e is not Solid).All(e => e is Solid)) throw new Exception("không sắp lại được thứ tự để thử");
         });
+        Damage("đưa nét trong block về layer ẩn của nó", d =>
+        {
+            var hidden = d.Layers.First(l => !l.IsOn);
+            foreach (var b in d.BlockRecords.Where(b => b.Name.StartsWith("parts_on_hidden")))
+                foreach (var e in b.Entities) e.Layer = hidden;
+        });
         Damage("bật lại layer ẩn", d => { foreach (var l in d.Layers) { l.IsOn = true; l.Flags &= ~ACadSharp.Tables.LayerFlags.Frozen; } });
         Damage("bỏ ảnh", d =>
         {
@@ -251,6 +257,15 @@ static class SelfTest
 
         // 9) A block placed on a hidden layer: Jw_cad hides all of it, whatever layers its parts are on.
         Add(new JwwBlockInsert { BlockNumber = 1, LayerGroup = 3, Layer = 5, X = 500, Y = -100, ScaleX = 1, ScaleY = 1 });
+
+        // 9b) The opposite: a block whose parts were drawn on a hidden layer, placed on a shown layer.
+        // Jw_cad draws it in full (seen on a real drawing: a beam mark block with its parts on a hidden group).
+        var onHidden = new JwwBlockDef { Number = 3, Name = "parts_on_hidden" };
+        onHidden.Entities.Add(new JwwLine { LayerGroup = 3, Layer = 5, PenColor = 2, X1 = 0, Y1 = 0, X2 = 12, Y2 = 0 });
+        onHidden.Entities.Add(new JwwArc { LayerGroup = 3, Layer = 5, PenColor = 2, CX = 6, CY = 0, Radius = 6, Flatness = 1, StartAngle = 0, SweepAngle = Math.PI });
+        onHidden.Entities.Add(new JwwBlockInsert { LayerGroup = 3, Layer = 5, BlockNumber = 2, X = 0, Y = -8, ScaleX = 1, ScaleY = 1 });
+        jww.Blocks.Add(onHidden);
+        Add(new JwwBlockInsert { BlockNumber = 3, X = 550, Y = -100, ScaleX = 1, ScaleY = 1, AngleRad = Math.PI / 2 });
 
         // 10) A hidden layer.
         Add(new JwwLine { LayerGroup = 3, Layer = 5, PenColor = 2, X1 = 0, Y1 = 50, X2 = 50, Y2 = 50 });

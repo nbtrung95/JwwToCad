@@ -790,6 +790,10 @@ public sealed class JwwToCadConverter
         {
             var list = new List<Entity>();
             foreach (var e in def.Entities) list.AddRange(ToCad(e, s, depth + 1));
+            // Jw_cad shows or hides a block by the layer it is placed on; the layers its parts were drawn on
+            // do not count (parts on a hidden layer still show). Layer 0 gives the same rule in AutoCAD.
+            var layer0 = _doc.Layers["0"];
+            foreach (var x in list) x.Layer = layer0;
             AddInDrawOrder(br.Entities, list);
         }
         finally { _ltK = saved; }

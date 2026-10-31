@@ -191,14 +191,17 @@ static class Verify
             return (a.CX + x * Math.Cos(a.Tilt) - y * Math.Sin(a.Tilt), a.CY + x * Math.Sin(a.Tilt) + y * Math.Cos(a.Tilt));
         }
 
-        // Jw_cad shows an object when its layer and every enclosing block's layer are shown.
+        // Jw_cad shows a top-level object when its layer is shown. Objects inside a block follow the layer
+        // of the block placed on the drawing only: their own layer is ignored (a block whose parts sit on
+        // a hidden layer is still drawn in full by Jw_cad).
         bool On(JwwEntity x) => jww.Groups[x.LayerGroup & 15].State != 0 && jww.Groups[x.LayerGroup & 15].LayerState[x.Layer & 15] != 0;
         bool chainVis = true;
+        int blockDepth = 0;
         void VisCheck(JwwEntity e, IEnumerable<Attr> found, string where)
         {
             var l = found.ToList();
             if (l.Count == 0) return;
-            bool want = chainVis && On(e);
+            bool want = blockDepth > 0 ? chainVis : On(e);
             Count("Ẩn/hiện", l.Any(a => a.Vis == want), $"{where}: Jw_cad {(want ? "hiện" : "ẩn")}, AutoCAD {(want ? "ẩn" : "hiện")}");
         }
 
@@ -259,8 +262,10 @@ static class Verify
                     if (!blocks.TryGetValue(bi.BlockNumber, out var def) || depth > 16) { Count("Block", false, $"thiếu định nghĩa #{bi.BlockNumber}"); break; }
                     var bt = T.Place(bi.X, bi.Y, bi.ScaleX, bi.ScaleY, bi.AngleRad).Then(t);
                     bool savedVis = chainVis;
-                    chainVis = chainVis && On(bi);
+                    if (blockDepth == 0) chainVis = On(bi);
+                    blockDepth++;
                     foreach (var be in def.Entities) Check(be, bt, depth + 1);
+                    blockDepth--;
                     chainVis = savedVis;
                     Count("Block", true);
                     break;

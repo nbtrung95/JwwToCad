@@ -60,6 +60,7 @@ cùng màu, kiểu nét, độ dày nét so với cài đặt lưu trong file JW
 - Tô đặc tròn: hình quạt, viên phân, phần ngoài cung, tròn đặc, vành khuyên 105/106.
 - Thứ tự vẽ: mảng tô đặc và ảnh luôn được vẽ trước (nằm dưới cùng), đường và chữ nằm trên; với nhóm lớp khác tỉ lệ, phần tô đặc nằm trong block riêng `..._TO_DAC`. Bộ kiểm tra báo lỗi nếu có đường/chữ nào bị tô đặc che.
 - Màu bút 1–9 lấy theo màu màn hình lưu trong từng file JWW (mỗi file có thể khác nhau).
+- Ẩn/hiện block: Jw_cad ẩn/hiện cả block theo layer nơi block được đặt; layer riêng của các nét bên trong không tính (nét vẽ trên layer ẩn vẫn hiện nếu block nằm trên layer đang hiện). Trong DWG các nét trong block nằm ở layer 0 để AutoCAD làm giống vậy.
 - Ảnh: ảnh nằm trong file JWW được giải nén ra thư mục `<tên>_anh` cạnh file DWG và chèn vào bản vẽ.
 
 Ký hiệu điểm (đầu mút kích thước, đường dẫn) dùng mã SXF: mã dương 1-11 là mũi tên/chấm,

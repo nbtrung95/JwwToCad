@@ -33,6 +33,8 @@ if (args[0] == "verify")
 }
 if (args[0] == "info") return Info.Run(args[1]);
 if (args[0] == "stats") return Stats.Run(args[1]);
+if (args[0] == "near") return NearTool.Run(args[1], args[2], double.Parse(args[3], CultureInfo.InvariantCulture));
+if (args[0] == "block") return BlockDump.Run(args[1], uint.Parse(args[2]));
 if (args[0] == "preview") return Preview.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
 
 var opt = new ConvertOptions();
