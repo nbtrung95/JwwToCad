@@ -44,6 +44,16 @@ static class SelfTest
         Damage("sai độ dày nét", d => { foreach (var l in All(d).OfType<Line>().Where(l => l.LineWeight != LineWeightType.ByLayer)) l.LineWeight = LineWeightType.W100; });
         Damage("dịch chữ", d => { foreach (var t in All(d).OfType<TextEntity>().Where((e, i) => i % 5 == 0)) t.InsertPoint += new CSMath.XYZ(30, 0, 0); });
         Damage("đảo đầu cung", d => { foreach (var a in All(d).OfType<Arc>()) (a.StartAngle, a.EndAngle) = (a.EndAngle, a.StartAngle + 0.3); });
+        Damage("đưa tô đặc lên trên cùng", d =>
+        {
+            // Model space rebuilt with the fills last. The entity list reuses freed slots last-in-first-out,
+            // so after removing everything the copies are added in reverse to get this order.
+            var all = d.Entities.ToList();
+            var want = all.Where(e => e is not Solid).Concat(all.Where(e => e is Solid)).Select(e => (Entity)e.Clone()).ToList();
+            foreach (var v in all) d.Entities.Remove(v);
+            for (int i = want.Count - 1; i >= 0; i--) d.Entities.Add(want[i]);
+            if (!d.Entities.SkipWhile(e => e is not Solid).All(e => e is Solid)) throw new Exception("không sắp lại được thứ tự để thử");
+        });
         Damage("bật lại layer ẩn", d => { foreach (var l in d.Layers) { l.IsOn = true; l.Flags &= ~ACadSharp.Tables.LayerFlags.Frozen; } });
         Damage("bỏ ảnh", d =>
         {
@@ -192,6 +202,11 @@ static class SelfTest
             s.Points = new[] { 10.0 + i * 15, sy, 20 + i * 15, sy, 22 + i * 15, sy + 8, 8 + i * 15, sy + 6 };
             if (i == 5) s.Rgb = 0x3080C0;
         }
+        // A line and a text drawn before a solid that covers them: the solid must end up underneath.
+        Add(new JwwLine { PenColor = 2, X1 = 112, Y1 = sy + 2, X2 = 128, Y2 = sy + 4 });
+        Add(new JwwText { PenColor = 2, StartX = 113, StartY = sy + 5, EndX = 116, EndY = sy + 5, Width = 3, Height = 3, Text = "AB" });
+        var cover = Add(new JwwSolid { PenColor = 10, PenStyle = 1, Rgb = 0x808080 });
+        cover.Points = new[] { 110.0, sy, 130, sy, 130, sy + 12, 110, sy + 12 };
         sy -= 30;
         int k = 0;
         foreach (var (style, flag, sw) in new[] { (101, 100.0, 0.0), (101, 0, 2.0), (101, 5, 2.5), (101, -1, 1.2), (105, 2.0, 0.0), (106, 2.5, 3.0), (101, 0, -1.0), (111, 0, 1.5) })

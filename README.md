@@ -58,6 +58,8 @@ cùng màu, kiểu nét, độ dày nét so với cài đặt lưu trong file JW
 - Chữ: giãn chữ (chữ nửa cỡ dùng nửa khoảng), chữ dọc 縦字, đậm/nghiêng (kiểu chữ +10000 nghiêng,
   +20000 đậm), phông theo tên, các mã ^ của Jw_cad, mã nhúng (tên file, tỉ lệ, ghi chú, ngày), ký tự %.
 - Tô đặc tròn: hình quạt, viên phân, phần ngoài cung, tròn đặc, vành khuyên 105/106.
+- Thứ tự vẽ: mảng tô đặc và ảnh luôn được vẽ trước (nằm dưới cùng), đường và chữ nằm trên; với nhóm lớp khác tỉ lệ, phần tô đặc nằm trong block riêng `..._TO_DAC`. Bộ kiểm tra báo lỗi nếu có đường/chữ nào bị tô đặc che.
+- Màu bút 1–9 lấy theo màu màn hình lưu trong từng file JWW (mỗi file có thể khác nhau).
 - Ảnh: ảnh nằm trong file JWW được giải nén ra thư mục `<tên>_anh` cạnh file DWG và chèn vào bản vẽ.
 
 Ký hiệu điểm (đầu mút kích thước, đường dẫn) dùng mã SXF: mã dương 1-11 là mũi tên/chấm,

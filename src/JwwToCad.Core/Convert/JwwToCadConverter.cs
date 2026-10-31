@@ -69,9 +69,9 @@ public sealed class JwwToCadConverter
         foreach (var b in _jww.Blocks) _blockDefs[b.Number] = b;
         if (_opt.Mode == CoordinateMode.Paper || !_opt.KeepLayoutForOtherScales)
         {
-            foreach (var e in _jww.Entities)
-                foreach (var ce in ToCad(e, Scale(e), 0))
-                    _doc.Entities.Add(ce);
+            var all = new List<Entity>();
+            foreach (var e in _jww.Entities) all.AddRange(ToCad(e, Scale(e), 0));
+            AddInDrawOrder(_doc.Entities, all);
         }
         else
             BuildRealSizeWithLayout();
@@ -89,32 +89,65 @@ public sealed class JwwToCadConverter
             .OrderByDescending(g => g.Count())
             .Select(g => g.Key).FirstOrDefault(1.0);
         Report.MainScale = main;
-        var groupBlocks = new Dictionary<int, BlockRecord>();
+        var top = new List<Entity>();
+        var groups = new SortedDictionary<int, (double S, List<Entity> List)>();
         foreach (var e in _jww.Entities)
         {
             double s = Scale(e);
-            if (Math.Abs(s - main) < 1e-9)
-            {
-                foreach (var ce in ToCad(e, s, 0)) _doc.Entities.Add(ce);
-                continue;
-            }
+            if (Math.Abs(s - main) < 1e-9) { top.AddRange(ToCad(e, s, 0)); continue; }
             int g = e.LayerGroup & 15;
-            if (!groupBlocks.TryGetValue(g, out var br))
-            {
-                string name = $"JW_NHOM_{g:X}_TL_1-{s.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}";
-                br = new BlockRecord(name);
-                _doc.BlockRecords.Add(br);
-                groupBlocks[g] = br;
-                double k = main / s;
-                _doc.Entities.Add(new Insert(br)
-                {
-                    InsertPoint = XYZ.Zero, XScale = k, YScale = k, ZScale = 1,
-                    Layer = _doc.Layers["0"],
-                });
-                Report.Warnings.Add($"Nhóm lớp {g:X} (tỉ lệ 1/{s:0.###}) khác tỉ lệ chính 1/{main:0.###}: để trong block {name} để giữ bố cục bản vẽ.");
-            }
-            foreach (var ce in ToCad(e, s, 0)) br.Entities.Add(ce);
+            if (!groups.TryGetValue(g, out var gl)) groups[g] = gl = (s, new List<Entity>());
+            gl.List.AddRange(ToCad(e, s, 0));
         }
+        foreach (var (g, (s, list)) in groups)
+        {
+            string name = $"JW_NHOM_{g:X}_TL_1-{s.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}";
+            double k = main / s;
+            Insert Place(BlockRecord b) => new Insert(b) { InsertPoint = XYZ.Zero, XScale = k, YScale = k, ZScale = 1, Layer = _doc.Layers["0"] };
+            // Fills of the group go into their own block so they can sit under every other object of the sheet.
+            var fills = list.Where(x => DrawRank(x) == 0).ToList();
+            if (fills.Count > 0)
+            {
+                var fb = new BlockRecord(name + "_TO_DAC");
+                _doc.BlockRecords.Add(fb);
+                AddInDrawOrder(fb.Entities, fills);
+                top.Add(Place(fb));
+            }
+            var br = new BlockRecord(name);
+            _doc.BlockRecords.Add(br);
+            AddInDrawOrder(br.Entities, list.Where(x => DrawRank(x) != 0).ToList());
+            top.Add(Place(br));
+            Report.Warnings.Add($"Nhóm lớp {g:X} (tỉ lệ 1/{s:0.###}) khác tỉ lệ chính 1/{main:0.###}: để trong block {name} để giữ bố cục bản vẽ"
+                + (fills.Count > 0 ? $", phần tô đặc trong block {name}_TO_DAC nằm dưới cùng." : "."));
+        }
+        AddInDrawOrder(_doc.Entities, top);
+    }
+
+    // ---------- draw order ----------
+    // Fills (solids, images) are drawn first so that lines and text are never hidden under them,
+    // then blocks that contain fills, then everything else, keeping the Jw_cad order within each rank.
+
+    readonly Dictionary<BlockRecord, bool> _hasFill = new();
+
+    bool HasFill(BlockRecord b)
+    {
+        if (_hasFill.TryGetValue(b, out bool v)) return v;
+        _hasFill[b] = false;
+        v = b.Entities.Any(x => x is Solid || x is RasterImage || (x is Insert i && i.Block != null && HasFill(i.Block)));
+        return _hasFill[b] = v;
+    }
+
+    int DrawRank(Entity x) => x switch
+    {
+        Solid or RasterImage => 0,
+        Insert i when i.Block != null && i.Block.Entities.All(y => y is Solid || y is RasterImage) && i.Block.Entities.Count > 0 => 0,
+        Insert i when i.Block != null && HasFill(i.Block) => 1,
+        _ => 2,
+    };
+
+    void AddInDrawOrder(CadObjectCollection<Entity> target, List<Entity> list)
+    {
+        foreach (var x in list.Select((x, n) => (x, n)).OrderBy(p => DrawRank(p.x)).ThenBy(p => p.n)) target.Add(x.x);
     }
 
     double Scale(JwwEntity e) =>
@@ -755,9 +788,9 @@ public sealed class JwwToCadConverter
         _ltK = ltK;
         try
         {
-            foreach (var e in def.Entities)
-                foreach (var ce in ToCad(e, s, depth + 1).ToList())
-                    br.Entities.Add(ce);
+            var list = new List<Entity>();
+            foreach (var e in def.Entities) list.AddRange(ToCad(e, s, depth + 1));
+            AddInDrawOrder(br.Entities, list);
         }
         finally { _ltK = saved; }
         return br;

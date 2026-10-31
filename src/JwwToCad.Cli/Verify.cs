@@ -32,6 +32,10 @@ static class Verify
         public List<(double X, double Y)> SolPts = new();  // solid corners only
         public List<Img> Imgs = new();
         public HashSet<string> LayersOff = new();
+        // Draw order: every drawn object gets the next number; fills keep their outline.
+        public int Seq;
+        public List<((double X, double Y)[] P, int Seq)> FillPolys = new();
+        public List<(double X, double Y, int Seq, string What)> Marks = new();
     }
 
     // 2D affine transform: x' = a*x + b*y + e, y' = c*x + d*y + f
@@ -448,6 +452,49 @@ static class Verify
                 if (layer != null && layer.IsOn != shouldOn) { visBad++; if (samples.Count < 60) samples.Add($"Layer {layer.Name}: bật/tắt khác Jw_cad"); }
             }
 
+        // Draw order: a line or text lying inside a fill must be drawn after it, or the fill hides it.
+        {
+            double cell = 5 * main;
+            var fillGrid = new Dictionary<(long, long), List<int>>();
+            for (int i = 0; i < flat.FillPolys.Count; i++)
+            {
+                var P = flat.FillPolys[i].P;
+                long x0 = (long)Math.Floor(P.Min(q => q.X) / cell), x1 = (long)Math.Floor(P.Max(q => q.X) / cell);
+                long y0 = (long)Math.Floor(P.Min(q => q.Y) / cell), y1 = (long)Math.Floor(P.Max(q => q.Y) / cell);
+                if ((x1 - x0 + 1) * (y1 - y0 + 1) > 10000) continue;
+                for (long a = x0; a <= x1; a++) for (long b = y0; b <= y1; b++)
+                {
+                    if (!fillGrid.TryGetValue((a, b), out var l)) fillGrid[(a, b)] = l = new();
+                    l.Add(i);
+                }
+            }
+            bool Inside((double X, double Y)[] P, double x, double y)
+            {
+                bool inside = false;
+                for (int i = 0, j = P.Length - 1; i < P.Length; j = i++)
+                {
+                    if ((P[i].Y > y) != (P[j].Y > y) && x < (P[j].X - P[i].X) * (y - P[i].Y) / (P[j].Y - P[i].Y) + P[i].X) inside = !inside;
+                    double ex = P[i].X - P[j].X, ey = P[i].Y - P[j].Y, len = Math.Sqrt(ex * ex + ey * ey);
+                    if (len < 1e-12) continue;
+                    double tt = Math.Clamp(((x - P[j].X) * ex + (y - P[j].Y) * ey) / (len * len), 0, 1);
+                    if (D(x, y, P[j].X + tt * ex, P[j].Y + tt * ey) <= tol) return false; // on the edge: not hidden
+                }
+                return inside;
+            }
+            foreach (var m in flat.Marks)
+            {
+                if (!fillGrid.TryGetValue(((long)Math.Floor(m.X / cell), (long)Math.Floor(m.Y / cell)), out var cand)) continue;
+                bool any = false, hidden = false;
+                foreach (int i in cand)
+                {
+                    if (!Inside(flat.FillPolys[i].P, m.X, m.Y)) continue;
+                    any = true;
+                    if (flat.FillPolys[i].Seq > m.Seq) { hidden = true; break; }
+                }
+                if (any) Count("Thứ tự vẽ (tô đặc nằm dưới)", !hidden, $"{m.What} tại ({F(m.X)},{F(m.Y)}) bị mảng tô đặc vẽ sau che mất");
+            }
+        }
+
         int bad = stats.Values.Sum(v => v.bad) + visBad;
         if (!quiet || bad > 0)
         {
@@ -508,11 +555,13 @@ static class Verify
         var eff = own != null && own.Name == "0" && parentLayer != null ? parentLayer : own;
         bool shown = chainShown && LayerShown(eff);
         var a = AttrOf(e, t, parent, shown);
+        int seq = e is Insert ? 0 : ++f.Seq;
         switch (e)
         {
             case Line l:
             {
                 var (x1, y1) = t.Ap(l.StartPoint.X, l.StartPoint.Y); var (x2, y2) = t.Ap(l.EndPoint.X, l.EndPoint.Y);
+                if (shown) f.Marks.Add(((x1 + x2) / 2, (y1 + y2) / 2, seq, "đường"));
                 f.Segs.Add(new Seg(x1, y1, x2, y2, a)); f.Pts.Add((x1, y1)); f.Pts.Add((x2, y2)); break;
             }
             case Arc ar:
@@ -541,6 +590,7 @@ static class Verify
             case TextEntity tx:
             {
                 var (x, y) = t.Ap(tx.InsertPoint.X, tx.InsertPoint.Y);
+                if (shown) f.Marks.Add((x, y, seq, $"chữ '{tx.Value}'"));
                 var (bold, italic, face) = StyleFlags(tx.Style);
                 f.Txts.Add(new Txt(x, y, tx.Height * t.Scale, tx.Rotation + t.Rot, tx.WidthFactor, tx.Value, a, bold, italic, face)); break;
             }
@@ -562,6 +612,7 @@ static class Verify
                     double bx = mt.InsertPoint.X + Math.Sin(rot) * d, by = mt.InsertPoint.Y - Math.Cos(rot) * d;
                     var (x, y) = t.Ap(bx, by);
                     string line = lines[k].Replace("\\{", "{").Replace("\\}", "}").Replace("\\\\", "\\");
+                    if (shown) f.Marks.Add((x, y, seq, $"chữ '{line}'"));
                     f.Txts.Add(new Txt(x, y, H * t.Scale, rot + t.Rot, wf, line, a, bold, italic, face));
                 }
                 break;
@@ -569,6 +620,7 @@ static class Verify
             case Solid so:
             {
                 var pts = new[] { so.FirstCorner, so.SecondCorner, so.ThirdCorner, so.FourthCorner };
+                if (shown) f.FillPolys.Add((new[] { pts[0], pts[1], pts[3], pts[2] }.Select(p => t.Ap(p.X, p.Y)).ToArray(), seq));
                 double cx = 0, cy = 0;
                 foreach (var p in pts) { var (x, y) = t.Ap(p.X, p.Y); cx += x / 4; cy += y / 4; f.Pts.Add((x, y)); f.SolPts.Add((x, y)); }
                 f.Sols.Add(new Sol(cx, cy, a));
