@@ -60,7 +60,7 @@ static class SelfTest
         var h = new JwwHeader { MaxDrawWidth = 100 };
         uint Cr(int r, int g, int b) => (uint)(r | (g << 8) | (b << 16));
         int[][] std = { new[] { 0, 0, 0 }, new[] { 0, 255, 255 }, new[] { 255, 255, 255 }, new[] { 0, 255, 0 }, new[] { 255, 255, 0 },
-                        new[] { 255, 0, 255 }, new[] { 0, 0, 255 }, new[] { 0, 128, 255 }, new[] { 255, 0, 0 }, new[] { 192, 192, 192 } };
+                        new[] { 255, 0, 0 }, new[] { 0, 0, 255 }, new[] { 255, 128, 0 }, new[] { 128, 0, 255 }, new[] { 192, 192, 192 } };
         for (int n = 0; n <= 9; n++) { h.ScreenColor[n] = Cr(std[n][0], std[n][1], std[n][2]); h.PrintColor[n] = 0; h.PrintWidth[n] = 1 + n % 3; h.ScreenWidth[n] = 1; }
         var rnd = new Random(7);
         for (int n = 100; n <= 356; n++)

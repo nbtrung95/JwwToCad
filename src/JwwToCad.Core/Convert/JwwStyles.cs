@@ -42,22 +42,35 @@ public sealed class JwwStyles
     public (ColorKind Kind, short Index, int R, int G, int B) PenColor(int pen, out string? problem)
     {
         problem = null;
-        if (pen >= 1 && pen <= 9) return (ColorKind.Index, StandardPenAci[pen], 0, 0, 0);
+        if (pen >= 1 && pen <= 9)
+        {
+            // Each file stores its own screen colour for pens 1-9 (users change them, e.g. pen 7 orange
+            // or pen 5 red); the fixed table is only for files whose settings could not be read.
+            if (_h == null || !_h.ScreenColor.TryGetValue(pen, out uint sc)) return (ColorKind.Index, StandardPenAci[pen], 0, 0, 0);
+            return FromRgb((int)(sc & 0xFF), (int)((sc >> 8) & 0xFF), (int)((sc >> 16) & 0xFF));
+        }
         if (pen >= 100 && pen <= 356)
         {
             (int r, int g, int b)? rgb = null;
             if (_h != null && _h.ScreenColor.TryGetValue(pen, out uint cr)) rgb = ((int)(cr & 0xFF), (int)((cr >> 8) & 0xFF), (int)((cr >> 16) & 0xFF));
             else if (pen >= 101 && pen <= 116) { var c = SxfColors[pen - 101]; rgb = (c.R, c.G, c.B); }
             if (rgb is not (int r, int g, int b)) { problem = $"màu SXF {pen} không có định nghĩa trong file"; return (ColorKind.Index, 7, 0, 0, 0); }
-            if ((r, g, b) == (0, 0, 0) || (r, g, b) == (255, 255, 255)) return (ColorKind.Index, 7, r, g, b);
-            for (short i = 1; i <= 9; i++)
-                if (i != 7 && AciRgb[i] == (r, g, b)) return (ColorKind.Index, i, r, g, b);
-            return (ColorKind.TrueColor, 0, r, g, b);
+            return FromRgb(r, g, b);
         }
         if (pen == 10) return (ColorKind.Index, 7, 0, 0, 0); // solids: the RGB stored with the solid is used
         if (pen == 0) return (ColorKind.Index, 7, 0, 0, 0); // background colour pen
         problem = $"số màu {pen} không thuộc bảng màu Jw_cad";
         return (ColorKind.Index, 7, 0, 0, 0);
+    }
+
+    /// <summary>Black and white become index 7 (shown against any background), colours equal to an
+    /// index colour use that index, the rest are true colours.</summary>
+    static (ColorKind Kind, short Index, int R, int G, int B) FromRgb(int r, int g, int b)
+    {
+        if ((r, g, b) == (0, 0, 0) || (r, g, b) == (255, 255, 255)) return (ColorKind.Index, 7, r, g, b);
+        for (short i = 1; i <= 9; i++)
+            if (i != 7 && AciRgb[i] == (r, g, b)) return (ColorKind.Index, i, r, g, b);
+        return (ColorKind.TrueColor, 0, r, g, b);
     }
 
     // ---------------- line types ----------------

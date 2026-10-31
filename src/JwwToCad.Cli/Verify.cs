@@ -99,6 +99,13 @@ static class Verify
         // 5 magenta, 6 blue, 7 white/black, 8 red, 9 grey); SXF pens use the RGB stored in the file.
         bool ColorOk(int pen, Attr a, out string want)
         {
+            if (pen >= 1 && pen <= 9 && h != null && h.ScreenColor.TryGetValue(pen, out uint pc))
+            {
+                int r = (int)(pc & 0xFF), g = (int)((pc >> 8) & 0xFF), b = (int)((pc >> 16) & 0xFF);
+                want = $"RGB {r},{g},{b} (màu bút {pen} trên màn hình Jw_cad)";
+                if ((r, g, b) == (0, 0, 0) || (r, g, b) == (255, 255, 255)) return a.Index7;
+                return a.Rgb == Rgb(r, g, b) && !a.Index7;
+            }
             if (pen >= 1 && pen <= 9)
             {
                 int[] want7 = { 0, 4, 7, 3, 2, 6, 5, 7, 1, 8 };

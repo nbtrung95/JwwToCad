@@ -32,6 +32,7 @@ if (args[0] == "verify")
     return Verify.Run(va[1], va[2], vp);
 }
 if (args[0] == "info") return Info.Run(args[1]);
+if (args[0] == "stats") return Stats.Run(args[1]);
 if (args[0] == "preview") return Preview.Run(args[1], args[2], args.Length > 3 ? args[3] : null);
 
 var opt = new ConvertOptions();
@@ -208,6 +209,58 @@ static class Info
         }
         foreach (var b in d.Blocks) Console.WriteLine($"Block {b.Number} '{b.Name}' n={b.Entities.Count}");
         foreach (var bi in d.Entities.OfType<JwwToCad.Core.Jww.JwwBlockInsert>().Take(20)) Console.WriteLine($"Insert #{bi.BlockNumber} g{bi.LayerGroup:X} at ({bi.X:F1},{bi.Y:F1}) s=({bi.ScaleX},{bi.ScaleY})");
+        return 0;
+    }
+}
+
+/// <summary>Feature census of a JWW file: which attributes and object kinds it really uses.</summary>
+static class Stats
+{
+    public static int Run(string path)
+    {
+        var d = JwwToCad.Core.Jww.JwwReader.Read(path);
+        Console.WriteLine($"== {Path.GetFileName(path)} v{d.Version} paper={d.PaperSize}");
+        if (d.Header != null)
+        {
+            Console.WriteLine("screen: " + string.Join(" ", Enumerable.Range(0, 10).Select(i => d.Header.ScreenColor.TryGetValue(i, out var c) ? $"{i}:{c:X6}" : $"{i}:-")));
+            Console.WriteLine("print : " + string.Join(" ", Enumerable.Range(0, 10).Select(i => d.Header.PrintColor.TryGetValue(i, out var c) ? $"{i}:{c:X6}" : $"{i}:-")));
+            Console.WriteLine("swid  : " + string.Join(" ", Enumerable.Range(0, 10).Select(i => d.Header.ScreenWidth.TryGetValue(i, out var c) ? $"{i}:{c}" : $"{i}:-")) + " max=" + d.Header.MaxDrawWidth);
+            Console.WriteLine("pwid  : " + string.Join(" ", Enumerable.Range(0, 10).Select(i => d.Header.PrintWidth.TryGetValue(i, out var c) ? $"{i}:{c}" : $"{i}:-")));
+            Console.WriteLine("prad  : " + string.Join(" ", Enumerable.Range(0, 10).Select(i => d.Header.PointRadius.TryGetValue(i, out var c) ? $"{i}:{c}" : $"{i}:-")));
+        }
+        var all = new List<(JwwToCad.Core.Jww.JwwEntity e, string where)>();
+        foreach (var e in d.Entities) all.Add((e, "top"));
+        foreach (var b in d.Blocks) foreach (var e in b.Entities) all.Add((e, "blk"));
+        void H(string name, IEnumerable<string> keys)
+        {
+            var g = keys.GroupBy(k => k).OrderByDescending(k => k.Count()).Take(40).Select(k => $"{k.Key}×{k.Count()}");
+            Console.WriteLine($"{name}: " + string.Join("  ", g));
+        }
+        H("kinds", all.Select(a => a.e.GetType().Name[3..] + "/" + a.where));
+        H("pen", all.Select(a => a.e.GetType().Name[3..4] + a.e.PenColor));
+        H("style", all.Select(a => a.e.GetType().Name[3..4] + a.e.PenStyle));
+        H("flag", all.Select(a => a.e.GetType().Name[3..4] + a.e.Flag.ToString("X")));
+        H("width", all.Select(a => a.e.GetType().Name[3..4] + a.e.PenWidth));
+        var tx = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwText>().Concat(all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwDimension>().Select(x => x.Text)).ToList();
+        H("ttype", tx.Select(t => t.TextType.ToString()));
+        H("tfont", tx.Select(t => t.Font));
+        H("tsize", tx.Select(t => $"{t.Width}x{t.Height}+{t.Spacing}"));
+        H("tang", tx.Select(t => t.AngleDeg.ToString("F0")));
+        H("tcodes", tx.Where(t => t.Text.Contains('^') || t.Text.Contains('%') || t.Text.Contains('&')).Select(t => t.Text.Length > 20 ? t.Text[..20] : t.Text));
+        var arcs = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwArc>().ToList();
+        H("arc", arcs.Select(a => (a.IsFullCircle ? "full" : "arc") + (Math.Abs(a.Flatness - 1) > 1e-9 ? "/ell" : "") + (a.Tilt != 0 ? "/tilt" : "")));
+        var pts = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwPoint>().ToList();
+        H("point", pts.Select(p => (p.IsTemporary ? "tmp" : "real") + "/s" + p.PenStyle + "/c" + p.Code));
+        var dims = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwDimension>().ToList();
+        H("dim", dims.Select(x => $"sxf{x.SxfMode}/ext{(x.Ext1 != null ? 1 : 0)}/pts{x.Points.Count}/ls{x.Line.PenStyle}"));
+        H("dimpt", dims.SelectMany(x => x.Points).Select(p => (p.IsTemporary ? "tmp" : "real") + "/s" + p.PenStyle + "/c" + (int)p.Code + "/f" + p.Flag.ToString("X") + "/sc" + p.Scale.ToString("G3")));
+        H("dimext", dims.Select(x => x.Ext1 == null ? "none" : (Math.Abs(x.Ext1.X1 - x.Ext1.X2) + Math.Abs(x.Ext1.Y1 - x.Ext1.Y2) < 1e-9 ? "zero" : "len")));
+        var sol = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwSolid>().ToList();
+        H("solid", sol.Select(s => $"s{s.PenStyle}/c{s.PenColor}"));
+        var ins = all.Select(a => a.e).OfType<JwwToCad.Core.Jww.JwwBlockInsert>().ToList();
+        H("insert", ins.Select(b => $"{b.ScaleX:G3},{b.ScaleY:G3},{b.AngleRad * 180 / Math.PI:F0}"));
+        for (int g = 0; g < 16; g++)
+            Console.WriteLine($"G{g:X} st={d.Groups[g].State} sc={d.Groups[g].Scale} layers=" + string.Join("", d.Groups[g].LayerState.Select(s => s.ToString())));
         return 0;
     }
 }
