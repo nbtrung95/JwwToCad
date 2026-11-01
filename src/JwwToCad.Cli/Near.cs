@@ -16,7 +16,13 @@ static class NearTool
             JwwPoint p => $"Point ({p.X:F2},{p.Y:F2}) tmp={p.IsTemporary}",
             _ => e.GetType().Name,
         };
-        foreach (var t in d.Entities.OfType<JwwText>().Where(t => t.Text == s))
+        var anchors = d.Entities.OfType<JwwText>().Where(t => t.Text == s).ToList();
+        if (s.StartsWith("@"))
+        {
+            var xy = s[1..].Split(',').Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            anchors = new List<JwwText> { new JwwText { StartX = xy[0], StartY = xy[1], Text = s } };
+        }
+        foreach (var t in anchors)
         {
             Console.WriteLine($"== '{s}' at ({t.StartX:F2},{t.StartY:F2}) g{t.LayerGroup:X} l{t.Layer:X}");
             foreach (var e in d.Entities)
