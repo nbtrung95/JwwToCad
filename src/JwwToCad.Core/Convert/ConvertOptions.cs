@@ -20,16 +20,12 @@ public sealed class ConvertOptions
     /// sheet, by putting each in a block scaled to the main scale.</summary>
     public bool KeepLayoutForOtherScales { get; set; } = true;
 
-    /// <summary>
-    /// AutoCAD sizes TrueType text by roughly the cap height, while Jw_cad's text height is the full
-    /// character cell. Measured in AutoCAD 2026 with ＭＳ ゴシック: the cell is about 1.24 × the AutoCAD
-    /// height, so the AutoCAD height is the Jw height × 0.8.
-    /// </summary>
-    public double TextHeightFactor { get; set; } = 0.8;
+    /// <summary>Fixed AutoCAD text height as a part of the Jw_cad height. Leave null to use the measured
+    /// value of each font (see JwwToCadConverter.FontMetrics).</summary>
+    public double? TextHeightFactor { get; set; }
 
-    /// <summary>Raise the baseline by this part of the cell, because Jw_cad places the bottom of the cell
-    /// (below the descenders) where AutoCAD places the baseline.</summary>
-    public double TextBaselineShift { get; set; } = 0.12;
+    /// <summary>Fixed baseline raise as a part of the Jw_cad height. Leave null to use each font's descent.</summary>
+    public double? TextBaselineShift { get; set; }
 
     /// <summary>The JWW file (for embedded file-name codes and linked images).</summary>
     public string? SourcePath { get; set; }

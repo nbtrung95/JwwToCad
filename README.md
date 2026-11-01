@@ -59,6 +59,7 @@ cùng màu, kiểu nét, độ dày nét so với cài đặt lưu trong file JW
   +20000 đậm), phông theo tên, các mã ^ của Jw_cad, mã nhúng (tên file, tỉ lệ, ghi chú, ngày), ký tự %.
 - Tô đặc tròn: hình quạt, viên phân, phần ngoài cung, tròn đặc, vành khuyên 105/106.
 - Thứ tự vẽ: mảng tô đặc và ảnh luôn được vẽ trước (nằm dưới cùng), đường và chữ nằm trên; với nhóm lớp khác tỉ lệ, phần tô đặc nằm trong block riêng `..._TO_DAC`. Bộ kiểm tra báo lỗi nếu có đường/chữ nào bị tô đặc che.
+- Cỡ chữ: AutoCAD tính chiều cao chữ TrueType khác Jw_cad và khác nhau theo phông. Đã đo trong AutoCAD 2026 bề rộng một chữ toàn khổ ở chiều cao 10: ＭＳ ゴシック 12,994, ＭＳ Ｐゴシック 14,546, HG丸ｺﾞｼｯｸM-PRO 13,196; chiều cao AutoCAD = chiều cao Jw × 10 / số đo đó, chân chữ nâng 36/256 chiều cao (phần dưới chân chữ của phông). Phông chưa đo dùng số của ＭＳ ゴシック.
 - Màu bút 1–9 lấy theo màu màn hình lưu trong từng file JWW (mỗi file có thể khác nhau).
 - Ẩn/hiện block: Jw_cad ẩn/hiện cả block theo layer nơi block được đặt; layer riêng của các nét bên trong không tính (nét vẽ trên layer ẩn vẫn hiện nếu block nằm trên layer đang hiện). Trong DWG các nét trong block nằm ở layer 0 để AutoCAD làm giống vậy.
 - Ảnh: ảnh nằm trong file JWW được giải nén ra thư mục `<tên>_anh` cạnh file DWG và chèn vào bản vẽ.

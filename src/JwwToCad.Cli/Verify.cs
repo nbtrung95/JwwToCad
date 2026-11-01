@@ -355,7 +355,8 @@ static class Verify
             int type = (int)(tx.TextType / 10000);
             foreach (var r in lay.Runs)
             {
-                double shift = r.CellH * 0.12;
+                var fm = JwwToCadConverter.FontMetrics(r.Font ?? tx.Font);
+                double shift = r.CellH * fm.Shift;
                 double u = r.Upright ? r.U - shift : r.U, v = r.Upright ? r.V : r.V + shift;
                 var (x, y) = t.Ap(tx.StartX + u * dx - v * dy, tx.StartY + u * dy + v * dx);
                 double cell = r.CellH * t.Scale;
@@ -369,7 +370,7 @@ static class Verify
                 double dr = Math.Abs(Math.IEEERemainder(c.Rot - grot, 2 * Math.PI));
                 double wf = r.CellW / r.CellH;
                 string? why = null;
-                if (hr < 0.78 || hr > 0.82) why = $"'{r.Text}' cao {F(c.H)}, cần {F(cell * 0.8)}";
+                if (Math.Abs(hr / fm.Height - 1) > 0.01) why = $"'{r.Text}' cao {F(c.H)}, cần {F(cell * fm.Height)}";
                 else if (dr > 1e-3) why = $"'{r.Text}' góc lệch {F(dr * 180 / Math.PI)}°";
                 else if (Math.Abs(c.Wf - wf) > 1e-3) why = $"'{r.Text}' hệ số rộng {F(c.Wf)}, cần {F(wf)}";
                 Count(kind, why == null, why);

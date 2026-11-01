@@ -224,6 +224,25 @@ public sealed class JwwToCadConverter
         ("HG創英角ポップ体", "HGRPP1.TTC", false), ("HG平成角ゴシック体W9", "HGRHG9.TTC", false),
     };
 
+    // Jw_cad draws a character in a cell as high as the font's em (full-width characters are one em wide),
+    // with the cell bottom at the font's descent below the baseline. AutoCAD's TrueType text height is a
+    // smaller, font-specific part of the em. Measured in AutoCAD 2026 as the advance of a full-width
+    // character (全) at height 10: ＭＳ ゴシック 12.994, ＭＳ Ｐゴシック 14.546, HG丸ｺﾞｼｯｸM-PRO 13.196.
+    // Descent of ＭＳ ゴシック/ＭＳ Ｐゴシック from the font: 36/256 em.
+    public static (double Height, double Shift) FontMetrics(string? font)
+    {
+        string f = (string.IsNullOrWhiteSpace(font) ? "ＭＳ ゴシック" : font).Normalize(System.Text.NormalizationForm.FormKC).Replace(" ", "").ToUpperInvariant();
+        if (f is "MSPゴシック" or "MSPGOTHIC") return (10 / 14.546, 36 / 256.0);
+        if (f is "HG丸ゴシックM-PRO" or "HGMARUGOTHICMPRO") return (10 / 13.196, 36 / 256.0);
+        return (10 / 12.994, 36 / 256.0); // ＭＳ ゴシック, and the fonts not measured
+    }
+
+    (double Height, double Shift) Metrics(string? font)
+    {
+        var m = FontMetrics(font);
+        return (_opt.TextHeightFactor ?? m.Height, _opt.TextBaselineShift ?? m.Shift);
+    }
+
     TextStyle StyleOf(string font, bool bold = false, bool italic = false)
     {
         font = string.IsNullOrWhiteSpace(font) ? "ＭＳ ゴシック" : font.Trim();
@@ -404,11 +423,12 @@ public sealed class JwwToCadConverter
         {
             double pitch = lay.Runs.Count > 1 ? lay.Runs[1].U - lay.Runs[0].U : r0.CellH;
             bool even = lay.Runs.Zip(lay.Runs.Skip(1)).All(z => Math.Abs(z.Second.U - z.First.U - pitch) < 1e-9);
-            double H = r0.CellH * _opt.TextHeightFactor;
+            var m0 = Metrics(r0.Font ?? t.Font);
+            double H = r0.CellH * m0.Height;
             double factor = pitch / (5.0 / 3.0 * H);
             if (even && factor >= 0.25 && factor <= 4)
             {
-                double topU = r0.U - r0.CellH * _opt.TextBaselineShift - H; // first baseline minus one height
+                double topU = r0.U - r0.CellH * m0.Shift - H; // first baseline minus one height
                 var mt = new MText
                 {
                     Value = MTextValue(lay.Runs.Select(r => r.Text), r0.CellW / r0.CellH),
@@ -430,14 +450,15 @@ public sealed class JwwToCadConverter
         var parts = new List<Entity>();
         foreach (var r in lay.Runs)
         {
-            double shift = r.CellH * _opt.TextBaselineShift;
+            var m = Metrics(r.Font ?? t.Font);
+            double shift = r.CellH * m.Shift;
             // Glyph "up" in the text frame: the column direction for normal glyphs, back along u for upright ones.
             var p = r.Upright ? At(r.U - shift, r.V) : At(r.U, r.V + shift);
             var txt = new TextEntity
             {
                 Value = Escape(r.Text),
                 InsertPoint = p,
-                Height = r.CellH * s * _opt.TextHeightFactor,
+                Height = r.CellH * s * m.Height,
                 Rotation = Norm(rot + (r.Upright ? Math.PI / 2 : 0)),
                 WidthFactor = r.CellW / r.CellH,
                 Style = StyleOf(r.Font ?? t.Font, bold ^ r.Bold, italic ^ r.Italic),
